@@ -76,12 +76,13 @@
   .sec-head .cmd { margin: 0; }
   .card { background: var(--bg-2); border: 1px solid var(--line); border-radius: 14px; }
   .builds { display: grid; gap: 12px; }
-  @media (min-width: 760px) { .builds { grid-template-columns: 1fr 1fr; } .build.feature { grid-column: 1 / -1; } }
+  @media (min-width: 760px) { .builds { grid-template-columns: 1fr 1fr; } .build.feature, .build.wide { grid-column: 1 / -1; } }
   .build { padding: 22px; display: flex; flex-direction: column; gap: 10px; transition: border-color .15s, transform .15s; }
   .build:hover { border-color: var(--accent); transform: translateY(-2px); }
   .build .tag { font: 400 11px/1 var(--mono); color: var(--accent); letter-spacing: .06em; text-transform: uppercase; }
   .build h3 { font: 900 1.9rem/1 var(--display); margin: 0; letter-spacing: .01em; }
   .build.feature h3 { font-size: clamp(2.2rem, 5vw, 3.2rem); }
+  .build.wide h3 { line-height: 1.05; text-wrap: balance; }
   .build p { margin: 0; color: var(--text-2); font-size: .95rem; max-width: 60em; }
   .build .links { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: auto; padding-top: 8px; font: 600 12.5px/1 var(--mono); }
   .build .links a { text-decoration: none; color: var(--text); border-bottom: 1px solid var(--line); padding-bottom: 3px; }
@@ -127,6 +128,7 @@
     <a class="mark" href="#top"><b>mtc</b><span class="dom">@fecmtc.github.io</span></a>
     <ul>
       <li><a href="#builds">builds</a></li>
+      <li class="hide-s"><a href="#writing">writing</a></li>
       <li class="hide-s"><a href="https://www.twitch.tv/fecmtc" rel="me noopener">twitch</a></li>
       <li class="hide-s"><a href="https://www.youtube.com/@fecmtc" rel="me noopener">youtube</a></li>
       <li><a href="https://github.com/fecmtc" rel="me noopener">github</a></li>
@@ -196,6 +198,21 @@
     </div>
   </section>
 
+  <section id="writing">
+    <div class="sec-head">
+      <h2>Writing</h2>
+      <p class="cmd"><i>]</i>\dir writing</p>
+    </div>
+    <div class="builds">
+      <article class="card build wide">
+        <div class="tag">essay · netcode · ~110 min read</div>
+        <h3>You Cannot Hide a Player and Show Them at the Same Time</h3>
+        <p>Server-side wallhack mitigation in OpenMoHAA, read from the source: when the server tells your client about a player behind a wall, when your client draws them, and why the setting is a trade between a cheat's head start and an honest player's late enemy. Unofficial notes, with interactive figures.</p>
+        <div class="links"><a href="wallhacks-bayesian-openmohaa.html">read it →</a></div>
+      </article>
+    </div>
+  </section>
+
   <footer>
     <span>See you on the server.</span>
     <span>press <span style="color:var(--accent)">~</span> for the console</span>
@@ -215,8 +232,9 @@
   }
   const go = href => { say("loading " + href + " ..."); setTimeout(() => { location.href = href; }, 350); };
   const CMDS = {
-    help: () => say("builds    what I've been making\ntwitch    open twitch.tv/fecmtc\nyoutube   open youtube.com/@fecmtc\ngithub    open github.com/fecmtc\nname      who is this\nclear     clear the console\nquit      close it"),
+    help: () => say("builds    what I've been making\nwriting   long reads\ntwitch    open twitch.tv/fecmtc\nyoutube   open youtube.com/@fecmtc\ngithub    open github.com/fecmtc\nname      who is this\nclear     clear the console\nquit      close it"),
     builds: () => { toggle(false); document.getElementById("builds").scrollIntoView(); },
+    writing: () => { toggle(false); document.getElementById("writing").scrollIntoView(); },
     twitch: () => go("https://www.twitch.tv/fecmtc"),
     youtube: () => go("https://www.youtube.com/@fecmtc"),
     github: () => go("https://github.com/fecmtc"),
