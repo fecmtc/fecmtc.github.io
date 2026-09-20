@@ -1,0 +1,984 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MOHAA netcode, visualised</title>
+<meta name="description" content="Why did that shot miss? See how Medal of Honor: Allied Assault shows you other players (in the past) and yourself (optimistically), modelled on the OpenMoHAA source.">
+<link rel="icon" type="image/svg+xml" href='data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"%3E%3Crect width="64" height="64" rx="14" fill="%230f172a"/%3E%3Cpath d="M13 18h24l14 14-14 14H13l14-14z" fill="%23fb7185"/%3E%3Cpath d="M13 18h24l14 14-14 14H13l14-14z" fill="none" stroke="%2338bdf8" stroke-width="3" opacity=".85"/%3E%3Ccircle cx="18" cy="32" r="3" fill="%2334d399"/%3E%3Ccircle cx="32" cy="32" r="3" fill="%23facc15"/%3E%3Ccircle cx="46" cy="32" r="3" fill="%2322d3ee"/%3E%3C/svg%3E'>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script>
+  /* light unless the reader picked dark with the toggle (same key as the rest of fecmtc.github.io) */
+  try { if (localStorage.getItem("theme") === "dark") document.documentElement.dataset.theme = "dark"; } catch (e) {}
+</script>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #ffffff; --bg-2: #f7f7f4; --line: #e5e4de; --text: #1a1a17; --text-2: #4a4a44; --muted: #72726a;
+    --accent: #8a5a00; --wash: rgba(138, 90, 0, .08); --grid: rgba(26, 26, 23, .06);
+    --teal: #0a7c6a; --rust: #b45309; --rose: #b91c1c; --sky: #0369a1;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0d0f0b; --bg-2: #14170f; --line: #272c1e; --text: #ece8d9; --text-2: #b7b3a0; --muted: #858270;
+    --accent: #e3a83b; --wash: rgba(227, 168, 59, .09); --grid: rgba(236, 232, 217, .06);
+    --teal: #3ecfb2; --rust: #ef7d4d; --rose: #f2607a; --sky: #5cb5f2;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 var(--sans); }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 20px; }
+  a { color: var(--accent); text-underline-offset: 3px; }
+  b, strong { font-weight: 600; }
+  code { font: 400 .86em var(--mono); background: var(--bg-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+
+  nav { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 0 6px; font: 400 13px/1 var(--mono); }
+  nav .mark { color: var(--text); font-weight: 600; text-decoration: none; }
+  nav ul { display: flex; align-items: center; gap: 4px; list-style: none; margin: 0; padding: 0; }
+  nav ul a, .theme-btn { display: block; padding: 8px 10px; border-radius: 6px; color: var(--text-2); text-decoration: none; background: none; border: 0; font: inherit; cursor: pointer; }
+  nav ul a:hover, .theme-btn:hover { color: var(--text); background: var(--wash); }
+  .theme-btn { padding: 7px; }
+  .theme-btn svg { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .theme-btn .sun, :root[data-theme="dark"] .theme-btn .moon { display: none; }
+  :root[data-theme="dark"] .theme-btn .sun { display: block; }
+
+  header.intro { padding: 10px 0 0; }
+  h1 { font: 600 clamp(1.4rem, 3.4vw, 1.8rem)/1.2 var(--sans); letter-spacing: -.01em; margin: 0 0 4px; }
+  .intro p { margin: 0; color: var(--text-2); }
+  section { padding: 30px 0 0; }
+  h2 { font: 600 1.15rem/1.3 var(--sans); margin: 0; }
+  h2 + .hint { margin: 2px 0 0; color: var(--text-2); font-size: .93rem; }
+  h3 { font: 600 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+
+  /* the lab: the picture never leaves the screen while you work the controls.
+     Phone: the field sticks to the top and the controls scroll under it (.stage dissolves, so the sticky box is bounded
+     by the whole .lab). Desktop: two columns, the whole stage pinned on the left, the controls on the right. */
+  .lab { margin-top: 12px; }
+  .stage { display: contents; }
+  .stage-view { position: sticky; top: 0; z-index: 5; background: var(--bg); margin: 0 -6px; padding: 6px 6px 8px; box-shadow: 0 10px 10px -10px rgba(0, 0, 0, .25); }
+  .stage-info { margin: 8px 0 22px; }
+  @media (max-height: 520px) and (max-width: 959px) { .stage-view { position: static; box-shadow: none; } }
+  @media (min-width: 960px) {
+    .lab { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 32px; align-items: start; }
+    .stage { display: block; position: sticky; top: 10px; }
+    .stage-view { position: static; margin: 0; padding: 0; box-shadow: none; }
+    .stage-info { margin-bottom: 0; }
+  }
+  canvas { display: block; width: 100%; background: var(--bg-2); border: 1px solid var(--line); border-radius: 12px; }
+  canvas.world { height: clamp(170px, 30vh, 250px); }
+  @media (min-width: 960px) { canvas.world { height: clamp(220px, 44vh, 380px); } }
+  #world1 { cursor: crosshair; touch-action: manipulation; }
+  #world2 { cursor: crosshair; touch-action: pan-y; }
+  canvas.ladder { height: 130px; margin-top: 10px; }
+  canvas.ladder[hidden] { display: none; }
+
+  /* the delay bar: what the delay is made of. It does not scroll; it only grows and shrinks. */
+  .budget-title { font-size: 1rem; margin: 0 0 8px; min-height: 1.6em; }
+  .budget-title b { font: 600 1.05em var(--mono); font-variant-numeric: tabular-nums; }
+  .budget[data-mode="extrap"] .budget-title { color: var(--rust); }
+  .budget[data-mode="frozen"] .budget-title { color: var(--rose); }
+  .budget-bar { display: flex; height: 22px; border-radius: 6px; overflow: hidden; background: var(--bg-2); border: 1px solid var(--line); }
+  .budget-bar i { display: block; height: 100%; transition: width .25s ease; }
+  .budget-key { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 7px 0 0; font-size: .82rem; color: var(--text-2); }
+  .budget-key span::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; background: var(--c); }
+  .budget-key b { font: 600 .95em var(--mono); font-variant-numeric: tabular-nums; }
+  .facts { margin: 10px 0 0; font-size: .86rem; color: var(--text-2); }
+  .facts b { font: 600 .95em var(--mono); color: var(--text); font-variant-numeric: tabular-nums; }
+
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .bar.actions { margin: 0 0 14px; }
+  .bar .sep { flex: 1; }
+  .btn { font: 600 12px/1 var(--mono); padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); cursor: pointer; }
+  .btn:hover { border-color: var(--accent); }
+  .btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+  .btn.primary { border-color: var(--accent); color: var(--accent); }
+  .btn[hidden] { display: none; }
+  .check { display: inline-flex; align-items: center; gap: 6px; font: 400 12px/1 var(--mono); color: var(--text-2); cursor: pointer; }
+  .check input { accent-color: var(--accent); }
+
+  /* controls: compact; the explanation lives in the ? tooltip and in the appendix */
+  .knob-group { margin: 0 0 20px; }
+  .scenes .btn { font-size: 11.5px; padding: 7px 9px; }
+  .ctl-list { display: grid; gap: 12px; }
+  .ctl { position: relative; }
+  .ctl-head { display: flex; align-items: center; gap: 6px; }
+  .ctl-head label { font-size: .9rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+  .ctl-head label code { font-size: .74em; font-weight: 400; color: var(--text-2); }
+  .ctl-head label input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
+  .ctl-head output { margin-left: auto; font: 600 12px/1 var(--mono); color: var(--accent); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .ctl input[type=range] { display: block; width: 100%; margin: 5px 0 0; accent-color: var(--accent); }
+  .q { flex: none; width: 17px; height: 17px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); color: var(--muted); font: 600 10px/1 var(--mono); padding: 0; cursor: help; }
+  .q:hover, .q:focus { color: var(--accent); border-color: var(--accent); }
+  .tip { position: absolute; z-index: 20; left: 0; right: 0; bottom: calc(100% + 4px); background: var(--text); color: var(--bg); font-size: .82rem; line-height: 1.5; padding: 10px 12px; border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, .25); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .12s; }
+  .tip code { background: none; border-color: color-mix(in srgb, currentColor 35%, transparent); }
+  .ctl-head:hover ~ .tip, .ctl-head:focus-within ~ .tip { opacity: 1; visibility: visible; }
+  .ctl-note { display: block; margin-top: 3px; font: 400 11px/1.4 var(--mono); color: var(--muted); }
+
+  /* calculator: a separate tool after the appendix. Inputs on the left, the config on the right; on a phone the config
+     sticks to the top while the inputs scroll under it, so a change is always in view. */
+  .divider { display: flex; align-items: center; gap: 14px; margin: 64px 0 0; font: 600 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .divider::before, .divider::after { content: ""; flex: 1; border-top: 2px solid var(--line); }
+  #calc { padding: 22px 0 48px; }
+  .calc { display: grid; gap: 18px; margin-top: 16px; }
+  .calc-in { display: grid; gap: 20px 32px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); align-content: start; }
+  .calc-out { order: -1; position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 6px 0 10px; }
+  .calc-out .facts, .calc-out .bar { position: static; }
+  @media (max-height: 520px) and (max-width: 959px) { .calc-out { position: static; } }
+  @media (min-width: 960px) { .calc { grid-template-columns: minmax(0, 1fr) 380px; gap: 40px; align-items: start; } .calc-out { order: 0; position: static; padding: 0; } }
+  .cfg { background: var(--bg-2); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: grid; gap: 9px; }
+  .cfg .ctl-head code { background: none; border: 0; padding: 0; font-size: .86rem; color: var(--text); }
+  .cfg .ctl-head output { font-size: .95rem; }
+  .cfg .changed output::after { content: " ●"; font-size: .6em; vertical-align: .3em; }
+  .ctl select { font: 600 12px/1.2 var(--mono); color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; margin-left: auto; }
+  .ctl .bar { margin-top: 6px; }
+  details.fine { margin-top: 8px; }
+  details.fine > summary { cursor: pointer; font: 400 12px/1.4 var(--mono); color: var(--muted); }
+  details.fine .ctl-list { margin-top: 10px; }
+
+  /* appendix */
+  details.more { border-top: 1px solid var(--line); padding: 14px 0; }
+  details.more:first-of-type { margin-top: 44px; }
+  details.more > summary { cursor: pointer; font-weight: 600; list-style-position: outside; }
+  details.more > div { color: var(--text-2); font-size: .93rem; max-width: 52rem; padding-top: 10px; }
+  details.more ol, details.more ul { padding-left: 1.2rem; margin: 0 0 12px; }
+  details.more li { margin: 0 0 8px; }
+  details.more dl { margin: 0; }
+  details.more dt { font-weight: 600; color: var(--text); margin-top: 14px; }
+  details.more dt code { margin-left: 6px; font-weight: 400; }
+  details.more dd { margin: 2px 0 0; }
+  footer { border-top: 1px solid var(--line); padding: 20px 0 48px; font: 400 12px/1.8 var(--mono); color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 20px; justify-content: space-between; }
+  footer a { color: var(--text-2); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav aria-label="Main">
+    <a class="mark" href="../">mtc</a>
+    <ul>
+      <li><a href="#calc">calculator</a></li>
+      <li><a href="#appendix">how it works</a></li>
+      <li><a href="https://github.com/fecmtc/fecmtc.github.io/tree/main/mohaa-netcode-demo" rel="noopener">source</a></li>
+      <li>
+        <button type="button" class="theme-btn" id="themeBtn" aria-label="Switch to dark theme" title="Switch to dark theme">
+          <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 13.2A8.5 8.5 0 1 1 10.8 3.5a6.6 6.6 0 0 0 9.7 9.7Z"/></svg>
+          <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></svg>
+        </button>
+      </li>
+    </ul>
+  </nav>
+
+  <header class="intro">
+    <h1>MOHAA netcode, visualised</h1>
+    <p>What your screen shows is never quite <em>now</em>. Move the sliders and watch. Hover any <b>?</b> for an explanation.</p>
+  </header>
+
+  <section id="others" aria-labelledby="others-h">
+    <h2 id="others-h">Enemies: you see the past</h2>
+    <p class="hint"><b>Click the field to shoot</b> at the enemy you see, and find out where they really were.</p>
+    <div class="lab">
+      <div class="stage">
+        <div class="stage-view">
+          <canvas class="world" id="world1" aria-label="An enemy running: the ring is where they really are, the dot is where your screen draws them. Click to shoot."></canvas>
+        </div>
+        <div class="stage-info">
+          <div class="bar actions">
+            <button type="button" class="btn primary" id="fireBtn" title="Shoots exactly at the enemy you see, so you can watch the result without aiming">Fire at what I see</button>
+            <span id="verdict" aria-live="polite" style="font-weight:600;font-size:.88rem"></span>
+            <span class="sep"></span>
+            <span data-timebar class="bar"></span>
+          </div>
+          <div class="budget" id="budget1" data-mode="interp">
+            <p class="budget-title" id="bt1">Waiting for the first updates…</p>
+            <div class="budget-bar" id="bb1"></div>
+            <div class="budget-key" id="bk1"></div>
+          </div>
+          <p class="facts" id="facts1"></p>
+          <label class="check" style="margin-top:12px"><input type="checkbox" data-ladder="ladder1"> show the packet timeline (advanced; easier at 25% speed)</label>
+          <canvas class="ladder" id="ladder1" hidden role="img" aria-label="Timeline of updates travelling from the server to you"></canvas>
+        </div>
+      </div>
+      <div class="knobs">
+        <div class="knob-group scenes"><h3>Try a connection</h3><div class="bar" data-scenes></div></div>
+        <div class="knob-group"><h3>Your connection</h3><div class="ctl-list" data-group="net"></div></div>
+        <div class="knob-group"><h3>Game settings</h3><div class="ctl-list" data-group="view"></div></div>
+        <div class="knob-group"><h3>The enemy</h3><div class="ctl-list" data-group="enemy"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="you" aria-labelledby="you-h">
+    <h2 id="you-h">You: move first, get checked later</h2>
+    <p class="hint"><b>Hold the mouse (or a finger) on the field to steer</b>, or click it and use WASD / arrow keys.</p>
+    <div class="lab">
+      <div class="stage">
+        <div class="stage-view">
+          <canvas class="world" id="world2" tabindex="0" aria-label="Your player: the dot is what your screen shows, the ring is where the server has you. Hold the pointer to steer, or focus and use WASD or the arrow keys."></canvas>
+        </div>
+        <div class="stage-info">
+          <div class="bar actions">
+            <button type="button" class="btn primary" id="shoveBtn" title="The server moves you without your PC knowing, like an explosion would. Watch how long your screen takes to find out.">Shove me (server side)</button>
+            <label class="check"><input type="checkbox" id="autopilot" checked> autopilot</label>
+            <span class="sep"></span>
+            <span data-timebar class="bar"></span>
+          </div>
+          <div class="budget" id="budget2" data-mode="interp">
+            <p class="budget-title" id="bt2">Waiting for the first updates…</p>
+            <div class="budget-bar" id="bb2"></div>
+            <div class="budget-key" id="bk2"></div>
+          </div>
+          <p class="facts" id="facts2"></p>
+          <label class="check" style="margin-top:12px"><input type="checkbox" data-ladder="ladder2"> show the packet timeline (advanced; easier at 25% speed)</label>
+          <canvas class="ladder" id="ladder2" hidden role="img" aria-label="Timeline of your commands going up to the server and updates coming back"></canvas>
+        </div>
+      </div>
+      <div class="knobs">
+        <div class="knob-group scenes"><h3>Try a connection</h3><div class="bar" data-scenes></div></div>
+        <div class="knob-group"><h3>Your connection</h3><div class="ctl-list" data-group="net"></div></div>
+        <div class="knob-group"><h3>Game settings</h3><div class="ctl-list" data-group="me"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <div id="appendix">
+    <details class="more">
+      <summary>How it works, in four points</summary>
+      <div>
+        <ol>
+          <li><b>The server is the referee.</b> Only the server knows where everybody really is. Your PC gets updates from it (<em>snapshots</em>), normally 20 a second, and each one is already old when it arrives: it spent half your ping travelling.</li>
+          <li><b>Other players are shown slightly in the past.</b> Twenty updates a second would look like a slideshow, so your game waits until it holds two updates and slides the enemy from one to the other. The price is delay: about half your ping plus one update. If the next update is late or lost, your game <em>guesses</em> for a moment, then gives up and the enemy freezes.</li>
+          <li><b>You are shown in the present, optimistically.</b> If your own movement waited for the server, every key press would feel as slow as your ping. So your game moves you at once and tells the server what you pressed. The server replays it and reports back. Usually they agree. When they don't, your game takes the server's answer and re-applies the key presses the server hasn't seen yet: a rubber-band.</li>
+          <li><b>Why the shot missed.</b> This game has no lag compensation: the server checks your shot against where the enemy is <em>when the shot arrives</em>, not where you saw them. Your screen is late, and the shot takes another half ping to get there. Against a runner you aim ahead, by roughly your ping plus one update.</li>
+        </ol>
+      </div>
+    </details>
+    <details class="more">
+      <summary>What every setting does</summary>
+      <div><dl id="glossary"></dl></div>
+    </details>
+    <details class="more">
+      <summary>How faithful is this to the game?</summary>
+      <div>
+        <p>The simulation follows the <a href="https://github.com/openmoh/openmohaa" rel="noopener">OpenMoHAA</a> source (checked at commit <code>667c50f9</code>), with the game's defaults and limits:</p>
+        <ul>
+          <li>Which moment your screen shows: the game tracks the server's clock from the updates it receives, creeps forward 1 ms per update and backs off 2 ms whenever it nearly ran out of data (<code>CL_SetCGameTime</code>, <code>CL_AdjustTimeDelta</code>). Nobody sets the delay; it finds its own level, which is why jitter increases it.</li>
+          <li>Other players: slide between two updates when both exist; otherwise continue along the last known velocity for at most <code>cg_smoothClientsTime</code>, or hold still if <code>cg_smoothClients</code> is off (<code>CG_CalcEntityLerpPositions</code>, <code>BG_EvaluateTrajectory</code>).</li>
+          <li>Updates leave only on server ticks, and only when <code>1000/snaps</code> ms have passed, with <code>snaps</code> capped at <code>sv_fps</code> (<code>SV_SendClientMessages</code>, <code>SV_UserinfoChanged</code>).</li>
+          <li>Key presses: one command per rendered frame; a packet every <code>1000/cl_maxpackets</code> ms carrying every command since <code>cl_packetdup</code> packets ago; the server runs them as they arrive and ignores ones it already ran (<code>CL_WritePacket</code>, <code>SV_UserMove</code>). Out-of-order packets are dropped (<code>Netchan_Process</code>).</li>
+          <li>Prediction: start from the newest update's verdict, replay every command after it (at most 128 of them, <code>CMD_BACKUP</code>, which is why a high ping limits your FPS), smooth a correction over 100 ms (<code>CG_PredictPlayerState</code>, <code>cg_errordecay</code>).</li>
+          <li>There is no lag compensation in the source; shots here are judged the same way.</li>
+        </ul>
+        <p><b>Simplified on purpose:</b> a flat field, one enemy, no walls, no acceleration; no delta compression, rate limiting or reliable commands; jitter and loss are evenly random, where a real line is bursty; your frame rate is your browser's (in the game, <code>com_maxfps</code>); and when you move the ping, <code>sv_fps</code> or <code>snaps</code> sliders the game's clock re-syncs at once, as if you had reconnected, so you see the effect right away (in the game it drifts there at 1–2 ms per update).</p>
+        <p>The long version of the enemy-visibility side, with the source quoted line by line: <a href="../wallhacks-bayesian-openmohaa.html">You Cannot Hide a Player and Show Them at the Same Time</a>.</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="divider" role="separator"><span>extra</span></div>
+
+  <section id="calc" aria-labelledby="calc-h">
+    <h2 id="calc-h">Settings calculator</h2>
+    <p class="hint">Describe your connection and it suggests client settings. Hover any <b>?</b> to see why.</p>
+    <div class="calc">
+      <div class="calc-in">
+        <div class="ctl">
+          <div class="ctl-head"><label for="calcPing">Ping</label><button type="button" class="q" aria-label="What ping should I enter?" aria-describedby="calcPingT">?</button><output for="calcPing" id="calcPingO"></output></div>
+          <div class="tip" role="tooltip" id="calcPingT">Your usual ping on the server you play on, as the scoreboard shows it. Ping decides how late everything is, and no client setting buys that back, so most suggestions follow how <em>steady</em> your line is (jitter, loss) instead. The exception is <code>com_maxfps</code>: a high ping limits how many FPS prediction can keep up with.</div>
+          <input type="range" id="calcPing" min="0" max="400" step="5" value="60">
+        </div>
+        <div class="ctl">
+          <div class="ctl-head"><label>Connection</label><button type="button" class="q" aria-label="What do the connection types mean?" aria-describedby="calcStyleT">?</button><output id="calcStyleO"></output></div>
+          <div class="tip" role="tooltip" id="calcStyleT">Sets how uneven (jitter) and how lossy the line is assumed to be. <b>Wired:</b> cable or fibre into the router. <b>Wi-Fi:</b> decent signal. <b>Mobile:</b> 4G/5G or a busy Wi-Fi. <b>Unstable:</b> lag spikes and packet loss you can feel.</div>
+          <div class="bar" id="calcStyle" role="group" aria-label="Connection type"></div>
+          <details class="fine" open><summary>fine-tune jitter and loss</summary>
+            <div class="ctl-list">
+              <div class="ctl"><div class="ctl-head"><label for="calcJitter">Jitter</label><output for="calcJitter" id="calcJitterO"></output></div><input type="range" id="calcJitter" min="0" max="150" step="1"></div>
+              <div class="ctl"><div class="ctl-head"><label for="calcLoss">Packet loss</label><output for="calcLoss" id="calcLossO"></output></div><input type="range" id="calcLoss" min="0" max="30" step="1"></div>
+              <button type="button" class="btn" id="calcFromDemo" title="Copies ping, jitter and packet loss from the sliders of the demos above">Use the demo's ping, jitter and loss</button>
+            </div>
+          </details>
+        </div>
+        <div class="ctl">
+          <div class="ctl-head"><label>I prefer</label><button type="button" class="q" aria-label="What does the preference change?" aria-describedby="calcPreferT">?</button></div>
+          <div class="tip" role="tooltip" id="calcPreferT">Only changes <code>cl_timeNudge</code>, which is a straight trade. <b>Freshest:</b> enemies drawn closer to where they really are, but the game guesses more, which can show as small jumps. <b>Smoothest:</b> enemies glide, but are drawn further behind. Try both with the Time nudge slider in the first demo.</div>
+          <div class="bar" id="calcPrefer" role="group" aria-label="Preference"></div>
+        </div>
+        <div class="ctl">
+          <div class="ctl-head"><label for="calcFps">Your FPS <code>com_maxfps</code></label><button type="button" class="q" aria-label="Why does my FPS matter?" aria-describedby="calcFpsT">?</button>
+            <select id="calcFps"><option>60</option><option>85</option><option selected>125</option><option>144</option><option>250</option><option>333</option><option>500</option><option>1000</option></select></div>
+          <div class="tip" role="tooltip" id="calcFpsT">Your game records one key-press command per frame and can only send a packet on a frame, so your FPS decides what <code>cl_maxpackets</code> really does. 85 is the game's default cap.</div>
+          <div class="ctl-head" style="margin-top:12px"><label for="calcSv">Server tick rate <code>sv_fps</code></label><button type="button" class="q" aria-label="How do I know the server tick rate?" aria-describedby="calcSvT">?</button>
+            <select id="calcSv"><option selected>20</option><option>25</option><option>30</option><option>40</option><option>60</option></select></div>
+          <div class="tip" role="tooltip" id="calcSvT">Set by the server admin; 20 unless they changed it. Connected to a server, type <code>sv_fps</code> in the console to see it.</div>
+        </div>
+      </div>
+      <div class="calc-out">
+        <div class="cfg" id="calcOut" aria-live="polite"></div>
+        <div class="bar" style="margin-top:10px">
+          <button type="button" class="btn primary" id="calcCopy" title="Copies the lines, ready to paste into the console or your config">Copy as config</button>
+          <span id="calcMsg" class="check" aria-live="polite"></span>
+        </div>
+        <p class="facts">● differs from the game default.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>References: <a href="https://www.gabrielgambetta.com/client-side-prediction-live-demo.html" rel="noopener">Gabriel Gambetta's netcode series</a> · <a href="https://github.com/openmoh/openmohaa" rel="noopener">OpenMoHAA source</a> · <a href="https://www.pcgamer.com/netcode-explained/" rel="noopener">PC Gamer netcode overview</a></span>
+    <span>Developed with ❤️ by <a href="https://mtreviso.github.io/" rel="noopener">mtc</a></span>
+  </footer>
+</div>
+
+<script>
+/* === SIM CORE START ===
+   No DOM in here, so it can be run and tested headlessly. Times are integer milliseconds. The server's clock and the
+   client's wall clock are the same number (S.now); the client still only learns server time from snapshots, as in the game. */
+const Sim = (() => {
+  "use strict";
+  const RESET_TIME = 500, MAX_PACKET_USERCMDS = 32, PACKET_BACKUP = 32, ERROR_DECAY = 100, EDGE = 14;
+  const CMD_BACKUP = 128;                                 // cg_public.h: prediction can replay at most this many key presses (one per frame)
+  const HIT_RADIUS = 16;                                  // a player is about 30 units wide
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+  function create(cfg, rand = Math.random) {
+    const world = { w: 1000, h: 300 };
+    const stats = { downSent: 0, downLost: 0, downStale: 0, upSent: 0, upLost: 0, upStale: 0, dupIgnored: 0, cmdsLost: 0, corrections: 0, lastCorrection: 0, hits: 0, misses: 0 };
+    const sv = { nextFrame: 0, lastSnapshotTime: -1e9, outSeq: 0, inSeq: -1, lastCmdTime: 0, lastCmdNum: 0, nextTurn: 0,
+                 enemy: { x: 260, y: 150, dx: 1, dy: 0 }, me: { x: 260, y: 150, commandTime: 0 } };
+    const cl = { inSeq: -1, snaps: [], history: [], latest: null, newSnapshots: false, serverTimeDelta: null, resyncAfter: null,
+                 serverTime: 0, oldServerTime: 0, extrapolated: false, outSeq: 0, outPackets: new Array(PACKET_BACKUP).fill(null), cmds: [], cmdNumber: 0 };
+    const cg = { time: 0, snap: null, next: null, f: 0, mode: "wait", extrapMs: 0, seen: null, pred: null, drawn: null,
+                 err: { x: 0, y: 0 }, errTime: -1e9, lastFix: null, pending: 0, pendingMs: 0 };
+    const S = { cfg, world, stats, sv, cl, cg, now: 0, packets: [], inflight: [], shots: [], HIT_RADIUS };
+
+    const snapshotMsec = () => Math.floor(1000 / clamp(cfg.snaps, 1, cfg.svFps));
+    const frameMsec = () => Math.max(1, Math.floor(1000 / cfg.svFps));
+    S.snapshotInterval = () => Math.ceil(snapshotMsec() / frameMsec()) * frameMsec();   // what you actually get
+
+    function send(p) {
+      p.sent = S.now; p.lost = rand() < cfg.loss / 100; p.arrive = S.now + Math.round(cfg.ping / 2 + rand() * cfg.jitter);
+      p.done = false; p.stale = false;
+      if (p.dir === "down") { stats.downSent++; if (p.lost) stats.downLost++; } else { stats.upSent++; if (p.lost) stats.upLost++; }
+      S.packets.push(p); S.inflight.push(p);
+    }
+
+    /* Pmove, reduced to its timing: a command moves you for the time since the previous command (PmoveSingle takes
+       msec from cmd.serverTime - ps.commandTime). So a command that never arrives is not lost time: the next one covers the gap. */
+    function pmove(st, cmd) {
+      const msec = clamp(cmd.time - st.commandTime, 1, 1000);
+      st.x = clamp(st.x + cmd.mx * cfg.mySpeed * msec / 1000, EDGE, world.w - EDGE);
+      st.y = clamp(st.y + cmd.my * cfg.mySpeed * msec / 1000, EDGE, world.h - EDGE);
+      st.commandTime = cmd.time;
+      return st;
+    }
+
+    // ---- server ----
+    function serverReceive(p) {
+      if (p.seq <= sv.inSeq) { p.stale = true; stats.upStale++; return; }          // Netchan_Process: out of order, dropped
+      sv.inSeq = p.seq;
+      for (const cmd of p.cmds) {
+        if (cmd.time <= sv.lastCmdTime) { stats.dupIgnored++; continue; }           // SV_UserMove: already ran this one
+        if (sv.lastCmdNum && cmd.num > sv.lastCmdNum + 1) stats.cmdsLost += cmd.num - sv.lastCmdNum - 1;
+        sv.lastCmdNum = cmd.num; sv.lastCmdTime = cmd.time;
+        pmove(sv.me, cmd);                                                          // run on arrival, not on the server tick
+      }
+    }
+    function serverFrame() {
+      if (S.now - sv.lastSnapshotTime < snapshotMsec()) return;                     // SV_SendClientMessages
+      sv.lastSnapshotTime = S.now;
+      const e = sv.enemy;
+      send({ dir: "down", seq: sv.outSeq++, snap: { serverTime: S.now,
+        enemy: { x: e.x, y: e.y, vx: e.dx * cfg.enemySpeed, vy: e.dy * cfg.enemySpeed, trTime: S.now },   // g_smoothClients: velocity rides along
+        ps: { x: sv.me.x, y: sv.me.y, commandTime: sv.me.commandTime } } });
+    }
+    function tickServer() {
+      const e = sv.enemy, step = cfg.enemySpeed / 1000;
+      if (S.now >= sv.nextTurn) { const a = rand() * Math.PI * 2; e.dx = Math.cos(a); e.dy = Math.sin(a); sv.nextTurn = S.now + cfg.turnEvery * 1000; }
+      e.x += e.dx * step; e.y += e.dy * step;
+      if (e.x < EDGE) { e.x = EDGE; e.dx = Math.abs(e.dx); } else if (e.x > world.w - EDGE) { e.x = world.w - EDGE; e.dx = -Math.abs(e.dx); }
+      if (e.y < EDGE) { e.y = EDGE; e.dy = Math.abs(e.dy); } else if (e.y > world.h - EDGE) { e.y = world.h - EDGE; e.dy = -Math.abs(e.dy); }
+      for (const shot of S.shots) {                                                 // no lag compensation: judged where the enemy is now
+        if (shot.done || shot.arrive > S.now) continue;
+        shot.done = true; shot.real = { x: e.x, y: e.y }; shot.miss = Math.hypot(e.x - shot.aim.x, e.y - shot.aim.y);
+        shot.hit = shot.miss <= HIT_RADIUS; if (shot.hit) stats.hits++; else stats.misses++;
+      }
+      for (let i = S.inflight.length - 1; i >= 0; i--) {
+        const p = S.inflight[i];
+        if (p.dir !== "up" || p.arrive > S.now) continue;
+        S.inflight.splice(i, 1); p.done = true;
+        if (!p.lost) serverReceive(p);
+      }
+      if (S.now >= sv.nextFrame) { serverFrame(); sv.nextFrame = S.now + frameMsec(); }
+    }
+
+    // ---- client ----
+    function adjustTimeDelta() {                                                    // CL_AdjustTimeDelta
+      cl.newSnapshots = false;
+      const newDelta = cl.latest.serverTime - S.now, dd = Math.abs(newDelta - cl.serverTimeDelta);
+      if (dd > RESET_TIME) { cl.serverTimeDelta = newDelta; cl.oldServerTime = cl.serverTime = cl.latest.serverTime; }
+      else if (dd > 100) cl.serverTimeDelta = (cl.serverTimeDelta + newDelta) >> 1;
+      else if (cl.extrapolated) { cl.extrapolated = false; cl.serverTimeDelta -= 2; }
+      else cl.serverTimeDelta++;
+    }
+    function processSnapshots() {                                                   // CG_ProcessSnapshots
+      if (!cg.snap) cg.snap = cl.snaps.shift();
+      for (;;) {
+        if (!cg.next) { if (!cl.snaps.length) break; cg.next = cl.snaps.shift(); }
+        // The game also asks for cg.time >= cg.snap.serverTime here. There it always holds, because its clock never runs
+        // backwards; ours can (the re-sync above), and with that test it would race ahead to the newest snapshot and stick.
+        if (cg.time < cg.next.serverTime) break;
+        cg.snap = cg.next; cg.next = null;
+      }
+      if (cg.time < cg.snap.serverTime) cg.time = cg.snap.serverTime;
+      cg.f = cg.next ? (cg.time - cg.snap.serverTime) / (cg.next.serverTime - cg.snap.serverTime) : 0;
+    }
+    function seeEnemy() {                                                           // CG_CalcEntityLerpPositions
+      const a = cg.snap.enemy;
+      cg.extrapMs = 0;
+      if (cg.next) {
+        const b = cg.next.enemy;
+        cg.seen = { x: a.x + cg.f * (b.x - a.x), y: a.y + cg.f * (b.y - a.y) }; cg.mode = "interp";
+      } else if (cfg.smooth) {
+        const over = Math.max(0, cg.time - a.trTime), t = Math.min(over, cfg.smoothTime);   // BG_EvaluateTrajectory's cap
+        cg.seen = { x: clamp(a.x + a.vx * t / 1000, EDGE, world.w - EDGE), y: clamp(a.y + a.vy * t / 1000, EDGE, world.h - EDGE) };
+        cg.mode = over > cfg.smoothTime ? "capped" : "extrap"; cg.extrapMs = over;
+      } else { cg.seen = { x: a.x, y: a.y }; cg.mode = "hold"; cg.extrapMs = Math.max(0, cg.time - a.trTime); }
+    }
+    function predict(cmd) {                                                         // CG_PredictPlayerState
+      const base = (cg.next || cg.snap).ps;
+      cg.pendingMs = S.now - base.commandTime;
+      if (cfg.noPredict) {                                                          // CG_InterpolatePlayerState
+        const a = cg.snap.ps, b = cg.next ? cg.next.ps : a;
+        cg.pred = null; cg.pending = 0; cg.drawn = { x: a.x + cg.f * (b.x - a.x), y: a.y + cg.f * (b.y - a.y) };
+        return;
+      }
+      const expected = cg.pred ? pmove({ x: cg.pred.x, y: cg.pred.y, commandTime: cg.pred.commandTime }, cmd) : null;
+      const st = { x: base.x, y: base.y, commandTime: base.commandTime };
+      let n = 0;
+      for (const c of cl.cmds) { if (c.time <= st.commandTime) continue; pmove(st, c); n++; }
+      const left = clamp((ERROR_DECAY - (S.now - cg.errTime)) / ERROR_DECAY, 0, 1);
+      if (expected) {
+        const ex = expected.x - st.x, ey = expected.y - st.y, d = Math.hypot(ex, ey);
+        if (d > 0.5) {                                                              // the server disagreed: ease the error out (cg_errordecay)
+          cg.err = { x: cg.err.x * left + ex, y: cg.err.y * left + ey }; cg.errTime = S.now;
+          cg.lastFix = { from: { x: expected.x, y: expected.y }, to: { x: st.x, y: st.y }, t: S.now, d };
+          stats.corrections++; stats.lastCorrection = d;
+        }
+      }
+      const f = clamp((ERROR_DECAY - (S.now - cg.errTime)) / ERROR_DECAY, 0, 1);
+      cg.pred = st; cg.pending = n; cg.drawn = { x: st.x + cg.err.x * f, y: st.y + cg.err.y * f };
+    }
+    function clientFrame(input) {
+      // read the network (the client reads its socket once per frame)
+      const got = [];
+      for (let i = S.inflight.length - 1; i >= 0; i--) { const p = S.inflight[i]; if (p.dir === "down" && p.arrive <= S.now) { S.inflight.splice(i, 1); p.done = true; if (!p.lost) got.push(p); } }
+      got.sort((a, b) => a.arrive - b.arrive || a.seq - b.seq);
+      for (const p of got) {
+        if (p.seq <= cl.inSeq) { p.stale = true; stats.downStale++; continue; }     // out of order: dropped
+        cl.inSeq = p.seq; cl.latest = p.snap; cl.snaps.push(p.snap); cl.newSnapshots = true;
+        cl.history.push(p.snap); if (cl.history.length > 10) cl.history.shift();
+      }
+      if (!cl.latest) return;
+      if (cl.serverTimeDelta === null || (cl.resyncAfter !== null && cl.newSnapshots && cl.latest.serverTime >= cl.resyncAfter)) {
+        // First snapshot. The game starts "exactly on this frame" and lets the drift below walk it back over a second or
+        // so; the demo starts one interval back, where that walk ends. Also used as a "reconnect" when the sliders move,
+        // on the first snapshot sent after the change (one still in flight would carry the old delay).
+        cl.serverTimeDelta = cl.latest.serverTime - S.now - S.snapshotInterval();
+        cl.oldServerTime = 0; cl.resyncAfter = null; cl.extrapolated = false; cl.newSnapshots = false;
+      }
+      // CL_SetCGameTime
+      cl.serverTime = Math.max(cl.oldServerTime, S.now + cl.serverTimeDelta - clamp(cfg.timeNudge, -30, 30));
+      cl.oldServerTime = cl.serverTime;
+      if (S.now + cl.serverTimeDelta >= cl.latest.serverTime - 5) cl.extrapolated = true;   // nearly out of data (time nudge not counted)
+      if (cl.newSnapshots) adjustTimeDelta();
+
+      // one usercmd per frame. Stamped with the client's own clock: the server only ever uses differences and order.
+      const cmd = { num: ++cl.cmdNumber, time: S.now, mx: input.x, my: input.y };
+      cl.cmds.push(cmd); if (cl.cmds.length > CMD_BACKUP) cl.cmds.shift();
+
+      // CL_ReadyToSendPacket / CL_WritePacket
+      const last = cl.outPackets[(cl.outSeq - 1) & (PACKET_BACKUP - 1)];
+      if (!last || S.now - last.time >= Math.floor(1000 / clamp(cfg.maxPackets, 30, 125))) {
+        const oldSeq = cl.outSeq - 1 - clamp(cfg.packetDup, 0, 5), old = oldSeq >= 0 ? cl.outPackets[oldSeq & (PACKET_BACKUP - 1)] : null;
+        const count = Math.min(MAX_PACKET_USERCMDS, cl.cmdNumber - (old ? old.cmdNumber : 0));
+        cl.outPackets[cl.outSeq & (PACKET_BACKUP - 1)] = { cmdNumber: cl.cmdNumber, time: S.now };
+        send({ dir: "up", seq: cl.outSeq++, cmds: cl.cmds.slice(-count) });
+      }
+
+      cg.time = cl.serverTime;
+      processSnapshots(); seeEnemy(); predict(cmd);
+    }
+
+    S.advance = (ms, input) => {
+      for (let i = 0; i < ms; i++) { S.now++; tickServer(); }
+      clientFrame(input || { x: 0, y: 0 });
+      while (S.packets.length && S.packets[0].arrive < S.now - 1600) S.packets.shift();
+    };
+    S.shove = () => {
+      const a = rand() * Math.PI * 2, m = sv.me;
+      m.x = clamp(m.x + Math.cos(a) * 90, EDGE, world.w - EDGE); m.y = clamp(m.y + Math.sin(a) * 90, EDGE, world.h - EDGE);
+    };
+    S.resync = () => { cl.resyncAfter = S.now; };
+    S.fire = (x, y) => {                                                            // the shot rides a command packet: half a ping to get there
+      const shot = { aim: { x, y }, sent: S.now, arrive: S.now + Math.round(cfg.ping / 2 + rand() * cfg.jitter), done: false };
+      S.shots.push(shot); if (S.shots.length > 8) S.shots.shift();
+      return shot;
+    };
+    S.setWorld = (w, h) => {
+      world.w = Math.max(200, w); world.h = Math.max(120, h);
+      for (const o of [sv.enemy, sv.me]) { o.x = clamp(o.x, EDGE, world.w - EDGE); o.y = clamp(o.y, EDGE, world.h - EDGE); }
+    };
+    return S;
+  }
+  return { create };
+})();
+
+/* The settings calculator. recommend() applies the engine's rules above to a connection. evaluate() runs the simulation
+   with a set of values and measures what they give: the rules were calibrated with it, and test.js uses it to hold every
+   suggestion against the game defaults. The page itself only calls recommend(). */
+const Advisor = (() => {
+  "use strict";
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const STYLES = { wired: { jitter: 3, loss: 0 }, wifi: { jitter: 25, loss: 1 }, mobile: { jitter: 50, loss: 2 }, unstable: { jitter: 100, loss: 8 } };
+  const GAME_DEFAULTS = { rate: 25000, snaps: 20, maxPackets: 30, packetDup: 1, timeNudge: 0, smooth: true, smoothTime: 100 };
+
+  // A packet goes out on the first frame at least 1000/cl_maxpackets ms (whole ms) after the previous one: CL_ReadyToSendPacket
+  function packetsPerSecond(maxPackets, fps) { const gate = Math.floor(1000 / clamp(maxPackets, 30, 125)), frame = 1000 / fps; return 1000 / (Math.max(1, Math.ceil(gate / frame - 1e-9)) * frame); }
+
+  function recommend({ ping, jitter, loss, prefer = "balanced", fps = 125, svFps = 20 }) {
+    const interval = Math.max(1, Math.floor(1000 / svFps));
+    const level = jitter >= 40 || loss >= 5 ? 2 : jitter >= 15 || loss >= 1 ? 1 : 0;         // 0 steady, 1 shaky, 2 unstable
+    // cl_timeNudge is a straight trade, measured in evaluate(): every -15 ms draws a runner about 4 units closer to the truth
+    // and costs more guessing, which on an unstable line turns into visible jumps. So it follows what the player prefers.
+    const timeNudge = { fresh: [-30, -30, -15], balanced: [-15, -15, 0], smooth: [0, 10, 30] }[prefer][level];
+    // com_maxfps is where ping comes in. Prediction replays the key presses the server has not confirmed yet, one per frame, and
+    // keeps only CMD_BACKUP (128) of them. That stretch lasts about ping + a couple of updates; once it holds more than 128 frames
+    // prediction runs out of history and you rubber-band on a perfect line (measured: ping 300 at 500 FPS, ~500 corrections a minute).
+    const unconfirmed = ping + jitter + 2 * interval + 20 + Math.max(0, timeNudge), fpsLimit = Math.floor(128000 / unconfirmed), asked = fps;
+    if (fps > fpsLimit) fps = [1000, 500, 333, 250, 200, 166, 144, 125, 100, 85, 60].find(v => v <= fpsLimit) || 60;
+    // Key presses: packets that arrive out of order are dropped, and within the jitter window they do overtake each other. So the
+    // repeats (cl_packetdup counts packets) must reach back across that window. Measured: at jitter 25, cl_maxpackets 125 with
+    // cl_packetdup 1 loses 4.5% of key presses where the defaults lose none; with enough repeats it loses none and is 16 ms quicker.
+    const reach = jitter;
+    let maxPackets = clamp(Math.round(fps), 30, 125), lowered = false;
+    if (reach > 5 * 1000 / packetsPerSecond(maxPackets, fps)) {                              // five repeats of tiny packets don't reach far enough: send fewer, fatter ones
+      const want = clamp(Math.floor(5000 / reach), 30, maxPackets); lowered = want < maxPackets; maxPackets = want;
+    }
+    const pps = packetsPerSecond(maxPackets, fps), gap = 1000 / pps, p = loss / 100;
+    let forLoss = 1; while (forLoss < 5 && Math.pow(p, forLoss + 1) > 0.001) forLoss++;       // evenly spread loss: a key press dies only if all its copies do
+    const packetDup = clamp(Math.max(1, Math.ceil(reach / gap), forLoss), 1, 5);
+    // cg_smoothClients: measured, guessing cuts visible enemy jumps about tenfold on a bad line, and changes nothing on a good one.
+    // cg_smoothClientsTime: 50 -> 100 halves the jumps on a bad line, 100 -> 150 helps a little more, beyond that nothing.
+    const smoothTime = level === 2 ? 150 : 100;
+    return { rate: 25000, snaps: svFps, maxFps: fps, maxPackets, packetDup, timeNudge, smooth: true, smoothTime,
+             notes: { level, interval, reach, lowered, pps, covers: packetDup * gap, fpsLimit, fpsLowered: fps < asked, unconfirmed } };
+  }
+
+  function evaluate(conn, set, { fps = 125, seconds = 14, seed = 7 } = {}) {
+    let s = seed; const rand = () => (s = (s * 1664525 + 1013904223) % 4294967296) / 4294967296;
+    const S = Sim.create({ mySpeed: 250, enemySpeed: 250, turnEvery: 2, noPredict: false, ping: conn.ping, jitter: conn.jitter, loss: conn.loss, svFps: conn.svFps || 20,
+      snaps: set.snaps, smooth: set.smooth, smoothTime: set.smoothTime, timeNudge: set.timeNudge, maxPackets: set.maxPackets, packetDup: set.packetDup }, rand);
+    S.setWorld(1200, 260);
+    const PATH = [{ x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 0, y: -1 }];            // walk a square, turning every 300 ms, so that a lost key press matters
+    let acc = 0, n = 0, late = 0, guess = 0, off = 0, inputAge = 0, jumps = 0, prev = null;
+    for (let i = 0; i < seconds * fps; i++) {
+      acc += 1000 / fps; const ms = Math.floor(acc); if (!ms) continue; acc -= ms;
+      S.advance(ms, PATH[Math.floor(S.now / 300) % 4]);
+      if (S.now < 4000 || !S.cg.seen) { prev = null; continue; }                                // let the client clock settle first
+      n++; late += S.now - S.cg.time; off += Math.hypot(S.cg.seen.x - S.sv.enemy.x, S.cg.seen.y - S.sv.enemy.y);
+      inputAge += S.now - S.sv.lastCmdTime;                                                     // how old the newest key press the server has is
+      if (S.cg.mode !== "interp" && S.cg.extrapMs >= 20) guess++;
+      if (prev && Math.hypot(S.cg.seen.x - prev.x, S.cg.seen.y - prev.y) > 250 * ms / 1000 + 6) jumps++;   // the enemy visibly skipped: further than it can run, plus 6 units
+      prev = S.cg.seen;
+    }
+    const secs = (S.now - 4000) / 1000;
+    return { late: late / n, guessing: 100 * guess / n, off: off / n, jumps: jumps / secs, inputAge: inputAge / n,
+             keyPressesLost: 100 * S.stats.cmdsLost / Math.max(1, S.cl.cmdNumber), corrections: S.stats.corrections };
+  }
+  return { STYLES, GAME_DEFAULTS, packetsPerSecond, recommend, evaluate };
+})();
+/* === SIM CORE END === */
+</script>
+
+<script>
+(() => {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+  // ---------- controls: one spec. The help text feeds both the ? tooltips and the appendix. ----------
+  const cfg = { mySpeed: 250 };
+  const SPEC = {
+    net: [
+      { id: "ping", name: "Ping", min: 0, max: 400, step: 5, val: 100, fmt: v => `${v} ms`, resync: true,
+        help: "How long a message takes to reach the server <em>and come back</em>; each direction takes half. Under 50 is great, 150 is playable, 300 hurts. Ping makes everything late, but not jerky." },
+      { id: "jitter", name: "Jitter", min: 0, max: 150, step: 5, val: 0, fmt: v => v ? `up to +${v} ms` : "none",
+        help: "How <em>uneven</em> the delay is: every packet gets a random extra delay up to this much. Your game copes by showing a bit more of the past (watch the buffer grow over a second or two), and sometimes has to guess." },
+      { id: "loss", name: "Packet loss", min: 0, max: 100, step: 1, val: 0, fmt: v => `${v}%`,
+        help: "The chance that any single packet never arrives. Lost updates make enemies stutter and jump; lost key-press packets can make <em>you</em> rubber-band." },
+    ],
+    view: [
+      { id: "svFps", name: "Server tick rate", cvar: "sv_fps", min: 5, max: 60, step: 1, val: 20, fmt: v => `${v}/s`, resync: true,
+        help: "How many times a second the server advances the world and can send updates. Set by the server admin. The game's default is 20: one tick every 50 ms." },
+      { id: "snaps", name: "Updates you ask for", cvar: "snaps", min: 5, max: 60, step: 1, val: 20, fmt: v => `${v}/s`, resync: true, note: true,
+        help: "How many updates per second <em>you</em> request. It can't exceed the tick rate, and updates only leave on a tick, so you really get the tick rate divided by a whole number. Fewer updates: bigger gaps, more delay." },
+      { id: "smooth", name: "Guess when late", cvar: "cg_smoothClients", toggle: true, val: true,
+        help: "<b>On:</b> when the next update hasn't arrived, keep the enemy moving in its last known direction (a guess). <b>Off:</b> freeze it where it was last seen. With updates arriving on time this changes nothing. Try it with packet loss." },
+      { id: "smoothTime", name: "Longest guess", cvar: "cg_smoothClientsTime", min: 0, max: 300, step: 10, val: 100, fmt: v => `${v} ms`,
+        help: "How long your game may keep guessing before it gives up and the enemy stops dead. Longer: fewer freezes, but bigger wrong guesses and bigger snaps back." },
+      { id: "timeNudge", name: "Time nudge", cvar: "cl_timeNudge", min: -30, max: 30, step: 1, val: 0, fmt: v => `${v > 0 ? "+" : ""}${v} ms`,
+        help: "Shifts the moment your screen shows by up to 30 ms. <b>Negative:</b> enemies are drawn closer to the present, but your game runs out of data sooner and guesses more. <b>Positive:</b> a bit more delay, a bit more tolerance for jitter." },
+    ],
+    enemy: [
+      { id: "enemySpeed", name: "Enemy speed", min: 50, max: 500, step: 10, val: 250, fmt: v => `${v} units/s`,
+        help: "Running speed in the game is about 250–290 units per second. The faster the enemy, the more distance any delay turns into." },
+      { id: "turnEvery", name: "Enemy turns every", min: 0.5, max: 10, step: 0.5, val: 2, fmt: v => `${v.toFixed(1)} s`,
+        help: "Straight lines are easy to guess. Every turn is a moment where a guess goes wrong, and where your delayed picture misleads you most." },
+    ],
+    me: [
+      { id: "predict", name: "Prediction", cvar: "cg_nopredict 0", toggle: true, val: true,
+        help: "<b>On:</b> your game moves you the instant you press a key and checks with the server afterwards. <b>Off:</b> you only move when the server says so. Switch it off and steer: that sluggishness is what prediction hides." },
+      { id: "maxPackets", name: "Key-press packets", cvar: "cl_maxpackets", min: 30, max: 125, step: 1, val: 30, fmt: v => `${v}/s`,
+        help: "How often your game mails your key presses to the server (30 to 125 a second). Higher: the server hears from you sooner and more evenly, so the ring follows in smaller steps." },
+      { id: "packetDup", name: "Repeat earlier packets", cvar: "cl_packetdup", min: 0, max: 5, step: 1, val: 1, fmt: v => v ? `last ${v}` : "off",
+        help: "Insurance against loss: every packet also repeats the key presses from this many previous packets, so when one goes missing the next one fills the hole. Try 30% loss with this at 0, then at 2." },
+    ],
+  };
+  const SCENES = [
+    { name: "LAN", ping: 5, jitter: 0, loss: 0, tip: "Same room as the server" },
+    { name: "Good", ping: 40, jitter: 5, loss: 0, tip: "Good broadband, server nearby" },
+    { name: "High ping", ping: 250, jitter: 10, loss: 0, tip: "Far from the server, but a steady line: late, not jerky" },
+    { name: "Shaky Wi-Fi", ping: 60, jitter: 80, loss: 3, tip: "Low ping, but uneven: the buffer grows and the game guesses now and then" },
+    { name: "Packet loss", ping: 80, jitter: 10, loss: 25, tip: "A quarter of the packets never arrive: guessing, freezing, jumping" },
+    { name: "Disaster", ping: 350, jitter: 120, loss: 12, tip: "Everything at once" },
+  ];
+
+  // A control can be on the page more than once (the connection sliders sit next to both pictures, so that the effect of a
+  // change is always in view). Every copy writes through apply(), which keeps the copies in step.
+  const BY_ID = {}, DEFAULTS = {};
+  for (const list of Object.values(SPEC)) for (const c of list) { BY_ID[c.id] = c; DEFAULTS[c.id] = c.val; c.copies = []; }
+  let sim = null;
+  const sceneBtns = [];
+  function apply(set) {
+    let resync = false;
+    for (const [id, v] of Object.entries(set)) {
+      const c = BY_ID[id]; cfg[id] = v; resync = resync || !!c.resync;
+      for (const k of c.copies) { if (c.toggle) k.input.checked = v; else { k.input.value = v; k.out.textContent = c.fmt(v); } }
+    }
+    cfg.noPredict = !cfg.predict;
+    if (!sim) return;
+    if (resync) sim.resync();
+    const every = sim.snapshotInterval(), capped = cfg.snaps > cfg.svFps ? `capped by sv_fps · ` : "";
+    for (const n of document.querySelectorAll(".snaps-note")) n.textContent = `→ ${capped}you really get ${(1000 / every).toFixed(1).replace(/\.0$/, "")}/s, one every ${every} ms`;
+    for (const [b, s] of sceneBtns) b.setAttribute("aria-pressed", String(s.ping === cfg.ping && s.jitter === cfg.jitter && s.loss === cfg.loss));
+  }
+  let uid = 0;
+  for (const host of document.querySelectorAll("[data-group]")) for (const c of SPEC[host.dataset.group]) {
+    const el = document.createElement("div"), id = `c${++uid}`; el.className = "ctl";
+    const name = `${c.name}${c.cvar ? ` <code>${c.cvar}</code>` : ""}`, q = `<button type="button" class="q" aria-label="What is ${c.name}?" aria-describedby="${id}t">?</button>`;
+    el.innerHTML = (c.toggle
+      ? `<div class="ctl-head"><label><input type="checkbox" id="${id}">${name}</label>${q}</div>`
+      : `<div class="ctl-head"><label for="${id}">${name}</label>${q}<output for="${id}"></output></div>`)
+      + `<div class="tip" role="tooltip" id="${id}t">${c.help}</div>`
+      + (c.toggle ? "" : `<input type="range" id="${id}" min="${c.min}" max="${c.max}" step="${c.step}">`)
+      + (c.note ? `<span class="ctl-note snaps-note"></span>` : "");
+    host.appendChild(el);
+    const input = el.querySelector("input"); c.copies.push({ input, out: el.querySelector("output") });
+    input.addEventListener("input", () => apply({ [c.id]: c.toggle ? input.checked : Number(input.value) }));
+  }
+  for (const bar of document.querySelectorAll("[data-scenes]")) {
+    for (const s of SCENES) {
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = s.name; b.title = `${s.tip} (ping ${s.ping}, jitter ${s.jitter}, loss ${s.loss}%)`;
+      b.addEventListener("click", () => apply({ ping: s.ping, jitter: s.jitter, loss: s.loss }));
+      bar.appendChild(b); sceneBtns.push([b, s]);
+    }
+    const d = document.createElement("button"); d.type = "button"; d.className = "btn"; d.textContent = "Defaults"; d.title = "Put every slider back";
+    d.addEventListener("click", () => apply(DEFAULTS)); bar.appendChild(d);
+  }
+  $("glossary").innerHTML = Object.values(SPEC).flat().map(c => `<dt>${c.name}${c.cvar ? `<code>${c.cvar}</code>` : ""}</dt><dd>${c.help}</dd>`).join("");
+
+  // ---------- theme + palette (a canvas cannot read CSS variables by itself) ----------
+  const root = document.documentElement, themeBtn = $("themeBtn"), pal = {};
+  function readPalette() { const cs = getComputedStyle(root); for (const k of ["bg", "bg-2", "line", "text", "text-2", "muted", "accent", "grid", "teal", "rust", "rose", "sky"]) pal[k] = cs.getPropertyValue("--" + k).trim(); }
+  function themeLabel() { const t = root.dataset.theme === "dark" ? "Switch to light theme" : "Switch to dark theme"; themeBtn.setAttribute("aria-label", t); themeBtn.title = t; }
+  themeBtn.addEventListener("click", () => {
+    const dark = root.dataset.theme !== "dark";
+    if (dark) root.dataset.theme = "dark"; else delete root.dataset.theme;
+    try { localStorage.setItem("theme", dark ? "dark" : "light"); } catch (e) {}
+    themeLabel(); readPalette();
+  });
+  themeLabel(); readPalette();
+
+  // ---------- canvases ----------
+  function canvas(id) {
+    const el = $(id), c = { el, ctx: el.getContext("2d"), w: 0, h: 0 };
+    c.fit = () => { const r = el.getBoundingClientRect(), d = window.devicePixelRatio || 1; if (!r.width) return; c.w = r.width; c.h = r.height; el.width = Math.round(r.width * d); el.height = Math.round(r.height * d); c.ctx.setTransform(d, 0, 0, d, 0, 0); if (c.onfit) c.onfit(); };
+    new ResizeObserver(c.fit).observe(el);
+    return c;
+  }
+  const world1 = canvas("world1"), world2 = canvas("world2"), ladders = { ladder1: canvas("ladder1"), ladder2: canvas("ladder2") };
+  const UNITS_H = 260;                                   // the field is 260 units tall; its width follows the canvas
+  const scale = () => world1.h / UNITS_H || 1;
+  world1.onfit = () => sim && sim.setWorld(world1.w / scale(), UNITS_H);
+  for (const box of document.querySelectorAll("[data-ladder]")) box.addEventListener("change", () => { const l = ladders[box.dataset.ladder]; l.el.hidden = !box.checked; l.fit(); });
+
+  // ---------- simulation + input ----------
+  const recent = { extrapAt: -1e9, frozenAt: -1e9, extrapMax: 0, guess: 0, late: null, pending: null };
+  const trails = { real: [], seen: [], me: [], server: [] };
+  function reset() {
+    sim = Sim.create(cfg); if (world1.w) sim.setWorld(world1.w / scale(), UNITS_H);
+    recent.extrapAt = recent.frozenAt = -1e9; recent.guess = 0; recent.late = recent.pending = null;
+    for (const k in trails) trails[k].length = 0;
+    apply({});
+  }
+  const keys = { left: false, right: false, up: false, down: false };
+  const KEYMAP = { arrowleft: "left", a: "left", arrowright: "right", d: "right", arrowup: "up", w: "up", arrowdown: "down", s: "down" };
+  let pointer = null, lastManual = -1e9, auto = { x: 300, y: 130, until: 0 };
+  world2.el.addEventListener("keydown", e => { const k = KEYMAP[e.key.toLowerCase()]; if (k && !e.ctrlKey && !e.metaKey && !e.altKey) { keys[k] = true; e.preventDefault(); } });
+  world2.el.addEventListener("keyup", e => { const k = KEYMAP[e.key.toLowerCase()]; if (k) keys[k] = false; });
+  world2.el.addEventListener("blur", () => { for (const k in keys) keys[k] = false; });
+  const toWorld = (el, e) => { const r = el.getBoundingClientRect(); return { x: (e.clientX - r.left) / scale(), y: (e.clientY - r.top) / scale() }; };
+  world2.el.addEventListener("pointerdown", e => { pointer = toWorld(world2.el, e); });
+  world2.el.addEventListener("pointermove", e => { if (pointer) pointer = toWorld(world2.el, e); });
+  for (const t of ["pointerup", "pointercancel", "pointerleave"]) world2.el.addEventListener(t, () => { pointer = null; });
+  world1.el.addEventListener("pointerdown", e => { const p = toWorld(world1.el, e); sim.fire(p.x, p.y); });
+  $("fireBtn").addEventListener("click", () => { if (sim.cg.seen) sim.fire(sim.cg.seen.x, sim.cg.seen.y); });
+  $("shoveBtn").addEventListener("click", () => sim.shove());
+  const toward = (from, to) => { const dx = to.x - from.x, dy = to.y - from.y, d = Math.hypot(dx, dy); return d < 8 ? { x: 0, y: 0 } : { x: dx / d, y: dy / d }; };
+  function currentInput(realNow) {
+    const me = sim.cg.pred || sim.cg.drawn || sim.sv.me;
+    const kx = (keys.right ? 1 : 0) - (keys.left ? 1 : 0), ky = (keys.down ? 1 : 0) - (keys.up ? 1 : 0);
+    if (kx || ky) { lastManual = realNow; const d = Math.hypot(kx, ky); return { x: kx / d, y: ky / d }; }
+    if (pointer) { lastManual = realNow; return toward(me, pointer); }
+    if (!$("autopilot").checked || realNow - lastManual < 1500) return { x: 0, y: 0 };
+    if (sim.now >= auto.until || Math.hypot(auto.x - me.x, auto.y - me.y) < 12)          // wander: pick a spot, walk to it, sometimes pause
+      auto = { x: 30 + Math.random() * (sim.world.w - 60), y: 30 + Math.random() * (sim.world.h - 60), until: sim.now + 700 + Math.random() * 1400, rest: Math.random() < 0.15 };
+    return auto.rest ? { x: 0, y: 0 } : toward(me, auto);
+  }
+
+  // ---------- drawing: the labels are on the picture, so it needs no legend ----------
+  const FONT = '600 12px system-ui, -apple-system, "Segoe UI", sans-serif', SMALL = '11px system-ui, -apple-system, "Segoe UI", sans-serif', MONO = '600 11px "JetBrains Mono", ui-monospace, Menlo, monospace';
+  function ring(ctx, p, r, fill, stroke, lw = 2.5, dash) { const k = scale(); ctx.save(); ctx.beginPath(); ctx.arc(p.x * k, p.y * k, r, 0, Math.PI * 2); if (fill) { ctx.fillStyle = fill; ctx.fill(); } if (stroke) { ctx.lineWidth = lw; ctx.strokeStyle = stroke; if (dash) ctx.setLineDash(dash); ctx.stroke(); } ctx.restore(); }
+  function seg(ctx, a, b, color, lw, dash) { const k = scale(); ctx.save(); ctx.beginPath(); ctx.moveTo(a.x * k, a.y * k); ctx.lineTo(b.x * k, b.y * k); ctx.strokeStyle = color; ctx.lineWidth = lw; if (dash) ctx.setLineDash(dash); ctx.lineCap = "round"; ctx.stroke(); ctx.restore(); }
+  function tag(c, p, text, color, dy) {             // a label that stays inside the field, with a halo so it reads over anything
+    const { ctx, w, h } = c, k = scale(); ctx.font = FONT; const tw = ctx.measureText(text).width;
+    const x = clamp(p.x * k, tw / 2 + 6, w - tw / 2 - 6), y = clamp(p.y * k + dy, 14, h - 8);
+    ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineJoin = "round"; ctx.lineWidth = 4; ctx.strokeStyle = pal["bg-2"]; ctx.strokeText(text, x, y); ctx.fillStyle = color; ctx.fillText(text, x, y);
+  }
+  function trail(ctx, pts, color, lw) {
+    if (pts.length < 2) return; const k = scale(), t1 = pts[pts.length - 1].t;
+    ctx.save(); ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.lineWidth = lw; ctx.strokeStyle = color;
+    for (let i = 1; i < pts.length; i++) { ctx.globalAlpha = 0.55 * (1 - (t1 - pts[i].t) / 1500); ctx.beginPath(); ctx.moveTo(pts[i - 1].x * k, pts[i - 1].y * k); ctx.lineTo(pts[i].x * k, pts[i].y * k); ctx.stroke(); }
+    ctx.restore();
+  }
+  function field(c) { const { ctx, w, h } = c, k = scale() * 100; ctx.clearRect(0, 0, w, h); ctx.strokeStyle = pal.grid; ctx.lineWidth = 1; ctx.beginPath(); for (let x = k; x < w; x += k) { ctx.moveTo(x, 0); ctx.lineTo(x, h); } for (let y = k; y < h; y += k) { ctx.moveTo(0, y); ctx.lineTo(w, y); } ctx.stroke(); }
+  function hint(c, text) { const { ctx, w, h } = c; ctx.font = SMALL; ctx.fillStyle = pal.muted; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic"; ctx.fillText(text, w / 2, h - 10); }
+
+  function drawWorld1() {
+    const { ctx } = world1, { cg, sv } = sim, k = scale(); field(world1);
+    if (!cg.seen) return;
+    trail(ctx, trails.real, pal.sky, 2); trail(ctx, trails.seen, pal.rose, 3);
+    const guessing = cg.mode === "extrap" && cg.extrapMs >= 20, frozen = cg.mode === "capped" || (cg.mode === "hold" && cg.extrapMs > 0);
+    seg(ctx, cg.seen, sv.enemy, pal.muted, 1, [3, 4]);
+    ring(ctx, sv.enemy, sim.HIT_RADIUS * k, null, pal.sky);
+    ring(ctx, cg.seen, 9, frozen ? pal.muted : guessing ? pal.rust : pal.rose);
+    for (const s of sim.shots) {                       // shots: where you aimed, and where the enemy was when it counted
+      const age = sim.now - s.sent; if (age > 2600) continue;
+      ctx.globalAlpha = clamp((2600 - age) / 600, 0, 1);
+      const a = { x: s.aim.x * k, y: s.aim.y * k }; ctx.strokeStyle = pal.text; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(a.x - 6, a.y - 6); ctx.lineTo(a.x + 6, a.y + 6); ctx.moveTo(a.x + 6, a.y - 6); ctx.lineTo(a.x - 6, a.y + 6); ctx.stroke();
+      if (s.done) { const col = s.hit ? pal.teal : pal.rose; seg(ctx, s.aim, s.real, col, 2); ring(ctx, s.real, sim.HIT_RADIUS * k, null, col, 2, [4, 3]); }
+      ctx.globalAlpha = 1;
+    }
+    const shot = sim.shots[sim.shots.length - 1], v = $("verdict");   // the verdict sits next to the button, clear of the moving labels
+    const text = !shot || sim.now - shot.sent > 4000 ? "" : !shot.done ? "shot on its way…" : shot.hit ? "HIT" : `MISS by ${Math.round(shot.miss)} units: the enemy had already moved to the dashed ring`;
+    if (v.textContent !== text) { v.textContent = text; v.style.color = !shot || !shot.done ? "var(--muted)" : shot.hit ? "var(--teal)" : "var(--rose)"; }
+    const above = sv.enemy.y <= cg.seen.y;             // keep the two labels on opposite sides so they never collide
+    tag(world1, sv.enemy, "really here", pal.sky, above ? -28 : 28);
+    tag(world1, cg.seen, frozen ? "frozen: no news" : guessing ? "guessing…" : `you see them here · ${sim.now - cg.time} ms ago`, frozen ? pal.muted : guessing ? pal.rust : pal.rose, above ? 24 : -24);
+    if (!sim.shots.length) hint(world1, "click anywhere to shoot");
+  }
+  function drawWorld2(realNow) {
+    const { ctx } = world2, { cg, sv } = sim, k = scale(); field(world2);
+    if (!cg.drawn) return;
+    trail(ctx, trails.server, pal.sky, 2); trail(ctx, trails.me, pal.rose, 3);
+    const fix = cg.lastFix && sim.now - cg.lastFix.t < 1100 ? cg.lastFix : null;
+    if (fix) { ctx.globalAlpha = 1 - (sim.now - fix.t) / 1100; seg(ctx, fix.from, fix.to, pal.rust, 3); ring(ctx, fix.from, 9, null, pal.rust, 1.5, [3, 3]); tag(world2, fix.from, `corrected by ${Math.round(fix.d)}`, pal.rust, -22); ctx.globalAlpha = 1; }
+    if (pointer) { ctx.strokeStyle = pal.muted; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(pointer.x * k - 6, pointer.y * k); ctx.lineTo(pointer.x * k + 6, pointer.y * k); ctx.moveTo(pointer.x * k, pointer.y * k - 6); ctx.lineTo(pointer.x * k, pointer.y * k + 6); ctx.stroke(); }
+    ring(ctx, sv.me, 13, null, pal.sky);
+    ring(ctx, cg.drawn, 9, pal.rose);
+    const above = sv.me.y <= cg.drawn.y;
+    tag(world2, sv.me, "server has you here", pal.sky, above ? -26 : 26);
+    tag(world2, cg.drawn, cfg.predict ? "you, on your screen" : "you (prediction off)", pal.rose, above ? 24 : -24);
+    if (realNow - lastManual > 4000 && document.activeElement !== world2.el) hint(world2, "hold the mouse here to steer · or click and use WASD / arrows");
+  }
+
+  function drawLadder(c, both) {
+    if (c.el.hidden || !c.w) return;
+    const { ctx, w, h } = c, { cg } = sim, now = sim.now;
+    ctx.clearRect(0, 0, w, h);
+    const gut = 58, right = w - 34, top = 46, bot = h - 28, span = clamp((right - gut) / 0.85, 450, 1100), k = (right - gut) / span, X = t => right - (now - t) * k;
+    ctx.font = MONO; ctx.textBaseline = "middle"; ctx.textAlign = "left"; ctx.fillStyle = pal.muted;
+    ctx.fillText("SERVER", 8, top); ctx.fillText("YOU", 8, bot);
+    ctx.save(); ctx.beginPath(); ctx.rect(gut, 0, w - gut, h); ctx.clip();
+    ctx.strokeStyle = pal.grid; ctx.lineWidth = 1; ctx.beginPath();
+    for (let t = Math.floor(now / 100) * 100; t > now - span; t -= 100) { ctx.moveTo(X(t), top - 8); ctx.lineTo(X(t), bot + 8); } ctx.stroke();
+    ctx.strokeStyle = pal.line; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(gut, top); ctx.lineTo(right, top); ctx.moveTo(gut, bot); ctx.lineTo(right, bot); ctx.stroke();
+    for (const p of sim.packets) {
+      if ((p.dir === "up" && !both) || p.arrive < now - span - 50) continue;
+      const y0 = p.dir === "down" ? top : bot, y1 = p.dir === "down" ? bot : top;
+      let f = clamp((now - p.sent) / Math.max(1, p.arrive - p.sent), 0, 1); if (p.lost) f = Math.min(f, 0.55);
+      const xa = X(p.sent), xb = xa + (X(p.arrive) - xa) * f, yb = y0 + (y1 - y0) * f;
+      const color = p.lost ? pal.rose : p.stale ? pal.muted : p.dir === "down" ? pal.sky : pal.accent;
+      ctx.globalAlpha = p.lost || p.stale ? 0.55 : p.dir === "down" ? 0.85 : 0.5; ctx.strokeStyle = color; ctx.lineWidth = p.dir === "down" ? 1.5 : 1;
+      ctx.beginPath(); ctx.moveTo(xa, y0); ctx.lineTo(xb, yb); ctx.stroke();
+      if (p.lost && f >= 0.55) { ctx.beginPath(); ctx.moveTo(xb - 3, yb - 3); ctx.lineTo(xb + 3, yb + 3); ctx.moveTo(xb + 3, yb - 3); ctx.lineTo(xb - 3, yb + 3); ctx.lineWidth = 1.5; ctx.stroke(); }
+      else if (f < 1) { ctx.globalAlpha = 1; ctx.fillStyle = color; ctx.beginPath(); ctx.arc(xb, yb, 2.5, 0, Math.PI * 2); ctx.fill(); }
+      else if (p.dir === "down") { ctx.globalAlpha = p.stale ? 0.5 : 1; ctx.fillStyle = color; ctx.beginPath(); ctx.arc(xa, y0, 2.5, 0, Math.PI * 2); ctx.fill(); }
+    }
+    ctx.globalAlpha = 1;
+    if (!both && cg.snap) {                                   // the moment your screen is showing, on the server's rail
+      const xc = X(cg.time), a = X(cg.snap.serverTime);
+      ctx.lineCap = "round"; ctx.lineWidth = 6; ctx.strokeStyle = cg.mode === "interp" ? pal.teal : cg.mode === "extrap" ? pal.rust : pal.muted;
+      ctx.beginPath(); ctx.moveTo(a, top); ctx.lineTo(cg.next ? X(cg.next.serverTime) : Math.max(a, xc), top); ctx.stroke(); ctx.lineCap = "butt";
+      ctx.fillStyle = pal.rose; ctx.beginPath(); ctx.moveTo(xc, top - 5); ctx.lineTo(xc - 6, top - 16); ctx.lineTo(xc + 6, top - 16); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = pal.rose; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(xc, top - 24); ctx.lineTo(right, top - 24); ctx.moveTo(xc, top - 28); ctx.lineTo(xc, top - 16); ctx.stroke();
+      ctx.font = SMALL; ctx.fillStyle = pal.rose; ctx.textAlign = "right"; ctx.textBaseline = "alphabetic";
+      const label = w < 560 ? `on screen: ${now - cg.time} ms ago` : `your screen is showing this moment, ${now - cg.time} ms ago`;
+      ctx.fillText(label, Math.max(gut + ctx.measureText(label).width + 4, xc - 10), top - 20);
+    }
+    if (both && cg.snap) {                                    // input the server has not confirmed yet, on your rail
+      const from = Math.max(gut, X((cg.next || cg.snap).ps.commandTime));
+      ctx.strokeStyle = pal.accent; ctx.lineWidth = 6; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(from, bot); ctx.lineTo(right, bot); ctx.stroke(); ctx.lineCap = "butt";
+      ctx.font = SMALL; ctx.fillStyle = pal.accent; ctx.textAlign = "right"; ctx.textBaseline = "alphabetic"; ctx.fillText(`${cg.pendingMs} ms not confirmed yet`, right, bot + 20);
+    }
+    ctx.restore();
+    ctx.strokeStyle = pal["text-2"]; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(right, top - 34); ctx.lineTo(right, bot + 10); ctx.stroke(); ctx.setLineDash([]);
+    ctx.font = MONO; ctx.fillStyle = pal["text-2"]; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic"; ctx.fillText("now", right, 10);
+    ctx.font = SMALL; ctx.fillStyle = pal.muted; ctx.textAlign = "left"; ctx.fillText("time →   grid: 100 ms   slanted line = one packet   × = lost", gut + 4, h - 6);
+  }
+
+  // ---------- the delay bars ----------
+  function budget(n, mode, title, parts, facts) {
+    $("budget" + n).dataset.mode = mode; $("bt" + n).innerHTML = title;
+    const total = parts.reduce((s, p) => s + p.ms, 0), full = Math.max(400, total);      // fixed scale, so more delay is a longer bar
+    $("bb" + n).innerHTML = parts.map(p => `<i style="width:${(100 * p.ms / full).toFixed(2)}%;background:${p.c}"></i>`).join("");
+    $("bk" + n).innerHTML = parts.map(p => `<span style="--c:${p.c}">${p.name} <b>${Math.round(p.ms)} ms</b></span>`).join("");
+    $("facts" + n).innerHTML = facts;
+  }
+  function describe() {
+    const { cg, sv, stats } = sim, now = sim.now;
+    if (!cg.seen) return;
+    const ease = (old, v) => old === null ? v : old + (v - old) * 0.25;
+    recent.late = ease(recent.late, now - cg.time); recent.pending = ease(recent.pending, cg.pendingMs);
+    const late = recent.late, half = cfg.ping / 2, gap = sim.snapshotInterval(), rest = late - half - gap;
+    const off = Math.hypot(cg.seen.x - sv.enemy.x, cg.seen.y - sv.enemy.y), lead = late + half;
+    const frozen = now - recent.frozenAt < 500, guessing = now - recent.extrapAt < 500;
+    budget(1, frozen ? "frozen" : guessing ? "extrap" : "interp",
+      frozen ? (cfg.smooth ? `Frozen: no update for too long, the game gave up guessing` : `Frozen: the update is late and guessing is off`)
+        : guessing ? `Guessing: the next update is late (up to ${Math.round(recent.extrapMax)} ms just now)`
+        : `You see the enemy <b>${Math.round(late)} ms</b> late, because:`,
+      [{ name: "travel (half your ping)", ms: half, c: "var(--sky)" }, { name: "waiting to hold two updates", ms: Math.max(0, gap + Math.min(0, rest)), c: "var(--teal)" }, { name: "safety buffer", ms: Math.max(0, rest), c: "var(--rust)" }],
+      `Enemy is off by <b>${off.toFixed(0)} units</b> · to hit a runner aim <b>${Math.round(lead * cfg.enemySpeed / 1000)} units</b> ahead · guessing <b>${Math.round(recent.guess * 100)}%</b> of the time · shots <b>${stats.hits}</b> hit, <b>${stats.misses}</b> missed`);
+
+    const wait = Math.max(0, recent.pending - cfg.ping), fix = cg.lastFix && now - cg.lastFix.t < 1500 ? cg.lastFix : null;
+    budget(2, fix ? "frozen" : cfg.predict ? "interp" : "extrap",
+      fix ? `Corrected by ${fix.d.toFixed(0)} units: the server disagreed, so your game took its answer`
+        : cfg.predict ? `Prediction is hiding <b>${Math.round(recent.pending)} ms</b> of lag from you:` : `Prediction off: you feel every key press <b>${Math.round(recent.pending)} ms</b> late:`,
+      [{ name: "key press travels to the server", ms: half, c: "var(--accent)" }, { name: "server waits for its next update", ms: wait, c: "var(--teal)" }, { name: "answer travels back", ms: half, c: "var(--sky)" }],
+      `Corrections <b>${stats.corrections}</b>${stats.corrections ? ` (last ${stats.lastCorrection.toFixed(0)} units)` : ""} · key presses lost for good <b>${stats.cmdsLost}</b> · key-press packets lost <b>${stats.upLost}</b> of ${stats.upSent}`);
+  }
+
+  // ---------- main loop ----------
+  let paused = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches, speed = 1, last = null, acc = 0, lastWords = 0;
+  function afterAdvance(ms) {
+    const { cg, sv } = sim, m = cg.mode;
+    // The game's clock creeps forward until it overshoots the newest update by a few ms for one frame, then backs off: that is
+    // how it finds its level, not a guess worth announcing. Only report guesses longer than a frame.
+    if (m === "extrap" && cg.extrapMs >= 20) { if (sim.now - recent.extrapAt > 500) recent.extrapMax = 0; recent.extrapAt = sim.now; recent.extrapMax = Math.max(recent.extrapMax, cg.extrapMs); }
+    if (m === "capped" || (m === "hold" && cg.extrapMs > 0)) recent.frozenAt = sim.now;
+    recent.guess += ((m === "interp" || m === "wait" || cg.extrapMs < 20 ? 0 : 1) - recent.guess) * Math.min(1, ms / 4000);
+    const push = (a, p) => { if (!p) return; a.push({ x: p.x, y: p.y, t: sim.now }); while (a.length && sim.now - a[0].t > 1500) a.shift(); };
+    push(trails.real, sv.enemy); push(trails.seen, cg.seen); push(trails.me, cg.drawn); push(trails.server, sv.me);
+  }
+  function frame(t) {
+    if (last === null) last = t;
+    const real = Math.min(100, t - last); last = t;
+    if (!paused) { acc += real * speed; const ms = Math.floor(acc); if (ms >= 1) { acc -= ms; sim.advance(ms, currentInput(t)); afterAdvance(ms); } }
+    drawWorld1(); drawWorld2(t); drawLadder(ladders.ladder1, false); drawLadder(ladders.ladder2, true);
+    if (t - lastWords > 150) { lastWords = t; describe(); }
+    requestAnimationFrame(frame);
+  }
+  // the time buttons sit under both pictures; all copies show the same state
+  const timeBtns = { pause: [], step: [], speed: [] };
+  function setPaused(p) { paused = p; for (const b of timeBtns.pause) { b.textContent = p ? "Play" : "Pause"; b.setAttribute("aria-pressed", String(p)); } for (const b of timeBtns.step) b.hidden = !p; }
+  function setSpeed(s) { speed = s; for (const [b, v] of timeBtns.speed) b.setAttribute("aria-pressed", String(v === s)); }
+  for (const bar of document.querySelectorAll("[data-timebar]")) {
+    const mk = (label, title, fn) => { const b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = label; b.title = title; b.addEventListener("click", fn); bar.appendChild(b); return b; };
+    const lab = document.createElement("span"); lab.className = "check"; lab.textContent = "speed"; bar.appendChild(lab);
+    for (const v of [0.1, 0.25, 0.5, 1]) timeBtns.speed.push([mk(`${v * 100}%`, v === 1 ? "Real time" : `Slow motion: ${v * 100}% of real time`, () => setSpeed(v)), v]);
+    timeBtns.pause.push(mk("Pause", "Pause / play", () => setPaused(!paused)));
+    timeBtns.step.push(mk("Step", "Advance one frame (16 ms)", () => { sim.advance(16, currentInput(performance.now())); afterAdvance(16); describe(); }));
+    mk("Reset", "Start again", reset);
+  }
+
+  // ---------- the calculator: Advisor.recommend() gives the values (test.js holds them to the simulation with Advisor.evaluate()) ----------
+  const calc = { ping: 60, style: "wired", ...Advisor.STYLES.wired, prefer: "balanced", fps: 125, svFps: 20 };
+  const chips = (hostId, options, key, onPick) => {
+    const host = $(hostId), btns = options.map(([value, label, title]) => { const b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = label; b.title = title; b.addEventListener("click", () => { onPick(value); calcUpdate(); }); host.appendChild(b); return [b, value]; });
+    return () => { for (const [b, v] of btns) b.setAttribute("aria-pressed", String(calc[key] === v)); };
+  };
+  const markStyle = chips("calcStyle", [["wired", "Wired", "Cable or fibre into the router"], ["wifi", "Wi-Fi", "Decent Wi-Fi signal"], ["mobile", "Mobile", "4G / 5G, or a busy Wi-Fi"], ["unstable", "Unstable", "Lag spikes and packet loss you can feel"]], "style", v => Object.assign(calc, { style: v }, Advisor.STYLES[v]));
+  const markPrefer = chips("calcPrefer", [["fresh", "Freshest enemies", "Enemies drawn closest to where they really are; more guessing"], ["balanced", "Balanced", "A little fresher than the default, almost no guessing on a steady line"], ["smooth", "Smoothest enemies", "Enemies glide; drawn a bit further behind"]], "prefer", v => { calc.prefer = v; });
+  for (const [id, key] of [["calcPing", "ping"], ["calcJitter", "jitter"], ["calcLoss", "loss"]]) $(id).addEventListener("input", e => { calc[key] = Number(e.target.value); if (key !== "ping") calc.style = "custom"; calcUpdate(); });
+  $("calcFps").addEventListener("change", e => { calc.fps = Number(e.target.value); calcUpdate(); });
+  $("calcSv").addEventListener("change", e => { calc.svFps = Number(e.target.value); calcUpdate(); });
+  $("calcFromDemo").addEventListener("click", () => { Object.assign(calc, { ping: cfg.ping, jitter: cfg.jitter, loss: Math.min(30, cfg.loss), style: "custom" }); calcUpdate(); });
+
+  const CVARS = [["rate", "rate"], ["snaps", "snaps"], ["com_maxfps", "maxFps"], ["cl_maxpackets", "maxPackets"], ["cl_packetdup", "packetDup"], ["cl_timeNudge", "timeNudge"], ["cg_smoothClients", "smooth"], ["cg_smoothClientsTime", "smoothTime"]];
+  const shown = (key, v) => key === "smooth" ? (v ? "1" : "0") : String(v);
+  let advice = null;
+  function why(key, r) {
+    const n = r.notes, pps = Math.round(n.pps), tn = r.timeNudge;
+    switch (key) {
+      case "rate": return "How much the server may send you per second. Configs carried over from the dial-up days often say 3000–5000, and then the server holds updates back. 25000 is OpenMoHAA's default and plenty.";
+      case "maxFps": return (n.fpsLowered
+        ? `<b>Lowered from ${calc.fps} because of your ping.</b> `
+        : `Keep yours. This is the one setting your ping decides: with this line, anything up to about ${n.fpsLimit} FPS is safe. `)
+        + `To predict your movement, your game replays the key presses the server has not confirmed yet, one per frame, and it keeps only 128 of them. With your ping that stretch lasts about ${Math.round(n.unconfirmed)} ms. Above ${n.fpsLimit} FPS it no longer fits, and you rubber-band even on a perfect line.`;
+      case "snaps": return `Ask for every update the server makes (its tick rate is ${calc.svFps}). Asking for more changes nothing; asking for less adds delay.`;
+      case "maxPackets": return n.lowered
+        ? `Lowered on purpose. With ${calc.jitter} ms of jitter, packets overtake each other and the late ones are thrown away; five repeats of very frequent packets would not reach back far enough. At ${r.maxFps} FPS this really sends about ${pps} a second.`
+        : `One packet per frame, up to the game's limit of 125, so your key presses and shots leave sooner. At ${r.maxFps} FPS this really sends about ${pps} a second.`;
+      case "packetDup": return `Each packet also repeats the ${r.packetDup} before it, so your last ${Math.round(n.covers)} ms of key presses survive a lost or late packet.` + (calc.jitter >= 15 ? ` This is what makes a high <code>cl_maxpackets</code> safe: on a jittery line packets overtake each other and the late ones are dropped. In the simulation, 125 packets a second with only 1 repeat loses several percent of key presses on a line like yours.` : ` Costs a little upload.`);
+      case "timeNudge": return tn < 0 ? `Draws enemies ${-tn} ms fresher: about ${Math.round(-tn * 0.25)} units closer to the truth for a runner. The price: the game guesses part of the time${n.level === 2 ? ", and on a line like this that can show as jumps" : ""}. Pick “Smoothest” if you'd rather not.`
+        : tn > 0 ? `Adds ${tn} ms of delay so that late updates still arrive in time: fewer guesses and jumps, but enemies are drawn about ${Math.round(tn * 0.25)} units further behind. Pick “Freshest” for the opposite trade.`
+        : `Left at the default: on this line, fresher would mean visible guessing and smoother would mean more delay.`;
+      case "smooth": return "When an update is late, keep the enemy moving instead of freezing it. In the simulation this cuts visible enemy jumps about tenfold on a bad line, and costs nothing on a good one. Needs <code>g_smoothClients 1</code> on the server (the default).";
+      case "smoothTime": return n.level === 2 ? "A bit longer than the default, to ride out two or three lost updates in a row. In the simulation, longer than this buys nothing." : "The default. On a line like yours the game rarely guesses for long, so a bigger value changes nothing.";
+    }
+  }
+  function calcUpdate() {
+    $("calcPing").value = calc.ping; $("calcPingO").textContent = `${calc.ping} ms`;
+    $("calcJitter").value = calc.jitter; $("calcJitterO").textContent = `${calc.jitter} ms`;
+    $("calcLoss").value = calc.loss; $("calcLossO").textContent = `${calc.loss}%`;
+    $("calcStyleO").textContent = `jitter ≈ ${calc.jitter} ms · loss ≈ ${calc.loss}%`;
+    markStyle(); markPrefer();
+    advice = Advisor.recommend(calc);
+    const changed = key => key === "maxFps" ? advice.notes.fpsLowered : advice[key] !== Advisor.GAME_DEFAULTS[key];   // your FPS is an input: only flag it when lowered
+    $("calcOut").innerHTML = CVARS.map(([cvar, key], i) => `<div class="ctl${changed(key) ? " changed" : ""}"><div class="ctl-head"><code>${cvar}</code><button type="button" class="q" aria-label="Why this value for ${cvar}?" aria-describedby="calcWhy${i}">?</button><output>${shown(key, advice[key])}</output></div><div class="tip" role="tooltip" id="calcWhy${i}">${why(key, advice)}</div></div>`).join("");
+  }
+  const configText = () => CVARS.map(([cvar, key]) => `seta ${cvar} "${shown(key, advice[key])}"`).join("\n");
+  const say = text => { $("calcMsg").textContent = text; setTimeout(() => { if ($("calcMsg").textContent === text) $("calcMsg").textContent = ""; }, 2500); };
+  $("calcCopy").addEventListener("click", async () => { try { await navigator.clipboard.writeText(configText()); say("copied"); } catch (e) { window.prompt("Copy these lines:", configText().replace(/\n/g, "; ")); } });
+
+  apply(DEFAULTS); reset(); setPaused(paused); setSpeed(1); calcUpdate();
+  world1.fit(); world2.fit();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
