@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>You Cannot Hide a Player and Show Them at the Same Time · mtc</title>
 <meta name="description" content="Server-side wallhack mitigation as a timing problem: how OpenMoHAA's server decides when to disclose a hidden player, how the client renders a player it has just been told about, why the choice is a trade rather than a switch, and how to model the trade with uncertain measurements.">
-<meta name="color-scheme" content="dark light">
 <meta property="og:type" content="article">
 <meta property="og:title" content="You Cannot Hide a Player and Show Them at the Same Time">
 <meta property="og:description" content="Server-side wallhack mitigation, OpenMoHAA, and the uncertainty between two packets.">
@@ -14,45 +13,51 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script>
+  /* light unless the reader picked dark with the toggle; set before first paint so the page never flashes */
+  try { if (localStorage.getItem("theme") === "dark") document.documentElement.dataset.theme = "dark"; } catch (e) {}
+</script>
 <style>
-  /* ---------- tokens: the first block is the same as index.html, the second is what a long read adds ---------- */
+  /* ---------- tokens: light is the default, the toggle in the nav sets data-theme="dark". The first line of each block
+     is shared with index.html, the rest is what a long read adds. Dark is screen-only, so print is always light. ---------- */
   :root {
-    --bg: #0d0f0b; --bg-2: #14170f; --line: #272c1e; --text: #ece8d9; --text-2: #b7b3a0; --muted: #858270;
-    --accent: #e3a83b; --accent-ink: #14110a; --wash: rgba(227, 168, 59, .09); --grid: rgba(236, 232, 217, .035);
+    color-scheme: light;
+    --bg: #ffffff; --bg-2: #f7f7f4; --line: #e5e4de; --text: #1a1a17; --text-2: #4a4a44; --muted: #72726a;
+    --accent: #8a5a00; --accent-ink: #fff8e6; --wash: rgba(138, 90, 0, .08); --grid: rgba(26, 26, 23, .04);
     --display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
     --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
-    --measure: 43rem;
-    --prose: #d5d1bf; --soft: rgba(236, 232, 217, .04); --soft-2: rgba(236, 232, 217, .075); --halo: #14170f;
-    --shadow: 0 14px 40px rgba(0, 0, 0, .55), 0 2px 8px rgba(0, 0, 0, .4);
+    --prose: #2a2a26; --soft: rgba(26, 26, 23, .03); --soft-2: rgba(26, 26, 23, .045); --halo: #f7f7f4;
+    --shadow: 0 12px 32px rgba(26, 26, 23, .14), 0 2px 6px rgba(26, 26, 23, .07);
     /* data colours. The prose names these hues ("the teal band", "blue boxes"), so both themes keep them. */
-    --teal: #3ecfb2; --rust: #ef7d4d; --rose: #f2607a; --sky: #5cb5f2; --plum: #ab93ff; --grey: #5c5f52;
-    --on-data: #0d0f0b; --on-data-dim: rgba(13, 15, 11, .72); --on-grey: #ece8d9; --on-grey-dim: rgba(236, 232, 217, .72);
-    --fig-ink: #ece8d9; --fig-muted: #a5a18e; --fig-rule: #363c2a;
-    --fig-panel: rgba(236, 232, 217, .04); --fig-track: rgba(236, 232, 217, .07); --fig-hollow: rgba(13, 15, 11, .55);
-    --fig-wall: #3d422f; --fig-wall-text: #ece8d9; --fig-wedge: rgba(92, 181, 242, .14);
-    --fig-out: rgba(242, 96, 122, .07); --fig-clip: rgba(239, 125, 77, .12);
-    --fig-in-strong: rgba(62, 207, 178, .26); --fig-in-weak: rgba(62, 207, 178, .09);
-    --code-bg: #090b07; --code-text: #d9d5c3; --code-cmt: #807d6a; --code-ln: #55543f;
-    --code-hl: rgba(227, 168, 59, .10); --code-hl-bar: #e3a83b;
+    --teal: #0a7c6a; --rust: #b45309; --rose: #b91c1c; --sky: #0369a1; --plum: #6d28d9; --grey: #c6c5be;
+    --on-data: #ffffff; --on-data-dim: rgba(255, 255, 255, .85); --on-grey: #1a1a17; --on-grey-dim: #72726a;
+    --fig-ink: #1a1a17; --fig-muted: #72726a; --fig-rule: #d9d8d1;
+    --fig-panel: rgba(26, 26, 23, .03); --fig-track: rgba(26, 26, 23, .06); --fig-hollow: rgba(255, 255, 255, .6);
+    --fig-wall: rgba(26, 26, 23, .85); --fig-wall-text: #ffffff; --fig-wedge: rgba(3, 105, 161, .09);
+    --fig-out: rgba(185, 28, 28, .06); --fig-clip: rgba(180, 83, 9, .10);
+    --fig-in-strong: rgba(10, 124, 106, .28); --fig-in-weak: rgba(10, 124, 106, .10);
+    --code-bg: #f5f5f2; --code-text: #1a1a17; --code-cmt: #6b6b63; --code-ln: #a3a39a;
+    --code-hl: rgba(138, 90, 0, .10); --code-hl-bar: #8a5a00;
   }
-  @media (prefers-color-scheme: light), print {
-    :root {
-      --bg: #f4f0e4; --bg-2: #ece7d7; --line: #d6d0bc; --text: #1c1e15; --text-2: #494a3c; --muted: #6f6d58;
-      --accent: #8a5a00; --accent-ink: #fff8e6; --wash: rgba(138, 90, 0, .09); --grid: rgba(28, 30, 21, .045);
+  @media screen {
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0d0f0b; --bg-2: #14170f; --line: #272c1e; --text: #ece8d9; --text-2: #b7b3a0; --muted: #858270;
+      --accent: #e3a83b; --accent-ink: #14110a; --wash: rgba(227, 168, 59, .09); --grid: rgba(236, 232, 217, .035);
 
-      --prose: #2b2d22; --soft: rgba(255, 255, 255, .45); --soft-2: rgba(255, 255, 255, .7); --halo: #ece7d7;
-      --shadow: 0 12px 32px rgba(28, 30, 21, .16), 0 2px 6px rgba(28, 30, 21, .08);
-      --teal: #0a7c6a; --rust: #b45309; --rose: #b91c1c; --sky: #0369a1; --plum: #6d28d9; --grey: #c4bda8;
-      --on-data: #ffffff; --on-data-dim: rgba(255, 255, 255, .85); --on-grey: #1c1e15; --on-grey-dim: #6f6d58;
-      --fig-ink: #1c1e15; --fig-muted: #6f6d58; --fig-rule: #d0c9b4;
-      --fig-panel: rgba(255, 255, 255, .55); --fig-track: rgba(255, 255, 255, .7); --fig-hollow: rgba(255, 255, 255, .5);
-      --fig-wall: rgba(28, 30, 21, .85); --fig-wall-text: #ffffff; --fig-wedge: rgba(3, 105, 161, .09);
-      --fig-out: rgba(185, 28, 28, .06); --fig-clip: rgba(180, 83, 9, .10);
-      --fig-in-strong: rgba(10, 124, 106, .28); --fig-in-weak: rgba(10, 124, 106, .10);
-      --code-bg: #e8e2cf; --code-text: #1c1e15; --code-cmt: #66644f; --code-ln: #9b967f;
-      --code-hl: rgba(138, 90, 0, .11); --code-hl-bar: #8a5a00;
+      --prose: #d5d1bf; --soft: rgba(236, 232, 217, .04); --soft-2: rgba(236, 232, 217, .075); --halo: #14170f;
+      --shadow: 0 14px 40px rgba(0, 0, 0, .55), 0 2px 8px rgba(0, 0, 0, .4);
+      --teal: #3ecfb2; --rust: #ef7d4d; --rose: #f2607a; --sky: #5cb5f2; --plum: #ab93ff; --grey: #5c5f52;
+      --on-data: #0d0f0b; --on-data-dim: rgba(13, 15, 11, .72); --on-grey: #ece8d9; --on-grey-dim: rgba(236, 232, 217, .72);
+      --fig-ink: #ece8d9; --fig-muted: #a5a18e; --fig-rule: #363c2a;
+      --fig-panel: rgba(236, 232, 217, .04); --fig-track: rgba(236, 232, 217, .07); --fig-hollow: rgba(13, 15, 11, .55);
+      --fig-wall: #3d422f; --fig-wall-text: #ece8d9; --fig-wedge: rgba(92, 181, 242, .14);
+      --fig-out: rgba(242, 96, 122, .07); --fig-clip: rgba(239, 125, 77, .12);
+      --fig-in-strong: rgba(62, 207, 178, .26); --fig-in-weak: rgba(62, 207, 178, .09);
+      --code-bg: #090b07; --code-text: #d9d5c3; --code-cmt: #807d6a; --code-ln: #55543f;
+      --code-hl: rgba(227, 168, 59, .10); --code-hl-bar: #e3a83b;
     }
   }
 
@@ -86,6 +91,10 @@
   nav ul a, nav ul button { display: block; padding: 8px 10px; border-radius: 6px; color: var(--text-2); text-decoration: none; background: none; border: 0; font: inherit; cursor: pointer; }
   nav ul a:hover, nav ul button:hover { color: var(--text); background: var(--wash); }
   nav kbd { font: inherit; color: var(--accent); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; margin-right: 4px; }
+  nav ul .theme-btn { padding: 7px; }
+  .theme-btn svg { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .theme-btn .sun, :root[data-theme="dark"] .theme-btn .moon { display: none; }
+  :root[data-theme="dark"] .theme-btn .sun { display: block; }
   @media (max-width: 600px) { nav .hide-s, nav .dom { display: none; } nav ul { gap: 2px; } }
 
   /* ---------- header ---------- */
@@ -93,10 +102,10 @@
   .cmd i { font-style: normal; color: var(--accent); }
   .post-head { padding: clamp(36px, 7vw, 76px) 0 0; }
   h1 { font: 900 clamp(2.7rem, 7.4vw, 5rem)/.94 var(--display); letter-spacing: .005em; margin: 14px 0 0 -.02em; max-width: 13em; text-wrap: balance; }
-  .post-sub { font: 400 clamp(.86rem, 1.5vw, .98rem)/1.55 var(--mono); color: var(--accent); margin: 22px 0 0; max-width: var(--measure); }
+  .post-sub { font: 400 clamp(.86rem, 1.5vw, .98rem)/1.55 var(--mono); color: var(--accent); margin: 22px 0 0; }
   .post-meta { font: 400 12.5px/1.7 var(--mono); color: var(--muted); margin: 10px 0 0; }
   .post-meta b { color: var(--text-2); }
-  .post-lede { font-size: clamp(1.04rem, 1.6vw, 1.14rem); line-height: 1.7; color: var(--text-2); margin: 28px 0 0; max-width: var(--measure); text-wrap: pretty; }
+  .post-lede { font-size: clamp(1.04rem, 1.6vw, 1.14rem); line-height: 1.7; color: var(--text-2); margin: 28px 0 0; text-wrap: pretty; }
   .pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 24px 0 0; }
   .pill { font: 400 11px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; }
 
@@ -115,15 +124,14 @@
   .toc a code { font-size: .88em; }
   @media (min-width: 760px) { .toc > ul { columns: 2; column-gap: 44px; } }
 
-  /* ---------- sections and prose: text keeps a readable measure, code, figures and tables use the whole column ---------- */
+  /* ---------- sections and prose: everything uses the whole column ---------- */
   .post > section { margin: 72px 0 0; }
   .post > .toc-wrap { margin-top: 48px; }
   .post > section > h2 { font: 900 clamp(1.9rem, 4.4vw, 2.7rem)/1.04 var(--display); letter-spacing: .005em; border-bottom: 1px solid var(--line); padding-bottom: 14px; margin: 0 0 28px; text-wrap: balance; }
-  .post h3 { font: 700 clamp(1.4rem, 2.9vw, 1.75rem)/1.12 var(--display); letter-spacing: .012em; margin: 46px 0 14px; max-width: 50rem; text-wrap: balance; }
+  .post h3 { font: 700 clamp(1.4rem, 2.9vw, 1.75rem)/1.12 var(--display); letter-spacing: .012em; margin: 46px 0 14px; text-wrap: balance; }
   .post h2 .sec-n, .post h3 .sec-n { color: var(--accent); }
   .post h2 code, .post h3 code { font-size: .6em; font-weight: 600; vertical-align: .14em; letter-spacing: 0; }
   .narrative-section { font-size: 1.0625rem; line-height: 1.75; color: var(--prose); }
-  .narrative-section > :is(p, ul, ol, .pull, .aside-box, details, .katex-display) { max-width: var(--measure); }
   .narrative-section > p, details.deep > div > p, .aside-box > p { margin: 0 0 1.05rem; text-wrap: pretty; }
   ul.pts { list-style: disc; padding-left: 1.3rem; margin: 0 0 1.1rem; }
   ul.pts li { margin: 0 0 .75rem; line-height: 1.7; }
@@ -134,7 +142,7 @@
   .pull { font: 700 clamp(1.45rem, 3vw, 1.85rem)/1.16 var(--display); letter-spacing: .012em; color: var(--text); border-left: 3px solid var(--accent); padding: 4px 0 4px 20px; margin: 2rem 0; text-wrap: balance; }
   .aside-box { background: var(--bg-2); border: 1px solid var(--line); border-radius: 14px; padding: 18px 22px; margin: 22px 0; font-size: .97rem; }
   .aside-box > :last-child { margin-bottom: 0; }
-  .src-note { font-size: .84rem; line-height: 1.55; color: var(--muted); margin: 0 0 1.5rem; max-width: var(--measure); }
+  .src-note { font-size: .84rem; line-height: 1.55; color: var(--muted); margin: 0 0 1.5rem; }
   .narrative-section > .src-note { margin: 0 0 1.5rem; }
   .codeblk + .src-note { margin-top: -.75rem; }
 
@@ -166,8 +174,6 @@
   details.deep > div > :last-child { margin-bottom: 0; }
   details.deep > div > p.dq { font-style: italic; color: var(--sky); margin-bottom: .9rem; }
   details.deep .codeblk { font-size: .74rem; }
-  .narrative-section > details.deep:has(pre) { max-width: none; }   /* a box that holds a listing gets the whole column, its prose keeps the measure */
-  details.deep > div > p { max-width: var(--measure); }
 
   /* ---------- code: verbatim excerpts, so no ligatures and no synthetic italics ---------- */
   code { font: 400 .84em var(--mono); font-variant-ligatures: none; background: var(--soft-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; color: var(--text); text-transform: none; }
@@ -179,7 +185,7 @@
   .codeblk .cl.hl { background: var(--code-hl); box-shadow: inset 3px 0 0 var(--code-hl-bar); }
   .codeblk .cl.el { color: var(--code-cmt); }
   .codeblk .cl.el::before { content: "…"; }
-  .codeblk[data-path$=".md"] { white-space: pre-wrap; overflow-wrap: anywhere; max-width: calc(var(--measure) + 2rem); }
+  .codeblk[data-path$=".md"] { white-space: pre-wrap; overflow-wrap: anywhere; }
   .codeblk[data-path$=".md"] code { width: auto; }
   .codeblk.pseudo { border: 1px dashed color-mix(in srgb, var(--rust) 60%, transparent); }
   summary:focus-visible, .tbl-scroll:focus-visible, .codeblk:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
@@ -194,10 +200,10 @@
   .code-card .code-title { flex-basis: 100%; color: var(--text-2); font-style: italic; }
   .code-src { font-size: .78rem; color: var(--muted); margin: 12px 0 6px; display: flex; flex-wrap: wrap; gap: 3px 10px; align-items: baseline; }
   .code-src .code-path { font: 400 .74rem/1.4 var(--mono); overflow-wrap: anywhere; }
-  .code-notes { list-style: none; padding-left: 0; margin: 12px 0 6px; font-size: .92rem; max-width: calc(var(--measure) + 4rem); }
+  .code-notes { list-style: none; padding-left: 0; margin: 12px 0 6px; font-size: .92rem; }
   .code-notes li { display: flow-root; margin: 0 0 .55rem; padding-left: 9.2rem; line-height: 1.6; color: var(--prose); }
   .code-notes .ln { float: left; margin: .22rem 0 0 -9.2rem; max-width: 8.7rem; font: 400 .7rem/1.5 var(--mono); color: var(--accent); background: var(--wash); padding: 1px 6px; border-radius: 4px; overflow-wrap: anywhere; }
-  .code-proves, .code-hist { font-size: .88rem; color: var(--text-2); margin: 8px 0 0; line-height: 1.6; max-width: calc(var(--measure) + 4rem); }
+  .code-proves, .code-hist { font-size: .88rem; color: var(--text-2); margin: 8px 0 0; line-height: 1.6; }
   .code-proves .pv-k { font-weight: 600; color: var(--text); }
   .side-by-side { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 20px 0 24px; }
   .side-by-side > div { min-width: 0; }
@@ -214,8 +220,6 @@
   /* ---------- maths ---------- */
   .katex { font-size: 1.04em; text-transform: none; }
   .nb { white-space: nowrap; }   /* a short formula and the punctuation next to it, see the last script but one */
-  .narrative-section .katex-display { max-width: var(--measure); }
-  .narrative-section details.deep:has(pre) .katex-display { max-width: none; }   /* the full-width box holds the two widest aligned blocks */
   .katex-display { margin: 1.3rem 0; padding: .4rem 0; overflow-x: auto; overflow-y: hidden; position: relative; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 
   /* ---------- tables ---------- */
@@ -236,11 +240,17 @@
   /* ---------- figures ---------- */
   .viz-card { background: var(--bg-2); border: 1px solid var(--line); border-radius: 14px; padding: 20px 20px 16px; margin: 30px 0; }
   .viz-card h4 { font: 600 1.04rem/1.35 var(--sans); color: var(--text); margin: 0 0 3px; }
-  .viz-card .sub { color: var(--text-2); font-size: .9rem; line-height: 1.55; margin: 0 0 14px; max-width: 54rem; }
-  .viz-card .fig-caption { color: var(--text-2); font-size: .9rem; line-height: 1.6; margin: 12px 0 0; max-width: 54rem; }
+  .viz-card .sub { color: var(--text-2); font-size: .9rem; line-height: 1.55; margin: 0 0 14px; }
+  .viz-card .fig-caption { color: var(--text-2); font-size: .9rem; line-height: 1.6; margin: 12px 0 0; }
   .fig-caption .fnum { font: 600 .78rem/1 var(--mono); letter-spacing: .02em; color: var(--accent); margin-right: 3px; }
   .viz-card svg { display: block; width: 100%; height: auto; overflow: visible; }
   .viz-card img { width: 100%; border-radius: 8px; display: block; }
+  .twoup { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 640px) { .twoup { grid-template-columns: 1fr; } }
+  .video-embed { margin: 26px 0; }
+  .video-embed .video-frame { position: relative; aspect-ratio: 16 / 9; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--bg-2); }
+  .video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .video-embed figcaption { color: var(--text-2); font-size: .9rem; line-height: 1.6; margin: 10px 0 0; }
   .axis path, .axis line { stroke: var(--fig-rule); }
   .axis text { fill: var(--fig-muted); font-size: 12px; font-family: var(--sans); }
   .grid line { stroke: var(--fig-rule); stroke-opacity: .6; }
@@ -277,7 +287,7 @@
   .stat .v { font: 600 1.12rem/1.4 var(--mono); color: var(--text); font-variant-numeric: tabular-nums; }
 
   /* ---------- references ---------- */
-  .ref-list { counter-reset: ref; list-style: none; padding-left: 0; max-width: 54rem; }
+  .ref-list { counter-reset: ref; list-style: none; padding-left: 0; }
   .ref-list li { margin: 9px 0; padding-left: 2.6rem; position: relative; font-size: .9rem; line-height: 1.6; color: var(--text-2); transition: background-color .6s ease; border-radius: 6px; }
   .ref-list li::before { counter-increment: ref; content: "[" counter(ref) "]"; position: absolute; left: 0; top: .1rem; font: 400 .78rem/1.6 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
   .ref-list li.ref-flash { background-color: var(--wash); transition-duration: 0s; }
@@ -323,7 +333,7 @@
   .cite-pop-foot a { color: var(--muted); }
   .cite-pop-foot a:hover { color: var(--accent); text-decoration: none; }
 
-  /* ---------- footer and console (index.html) ---------- */
+  /* ---------- footer and console ---------- */
   footer { border-top: 1px solid var(--line); margin-top: 88px; padding: 28px 0 56px; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; font: 400 12px/1.6 var(--mono); color: var(--muted); }
   footer a { text-decoration: none; border-bottom: 1px solid var(--line); }
   footer a:hover { color: var(--accent); border-color: var(--accent); }
@@ -362,7 +372,7 @@
     #con, #con.open, .btn, .chip, .cite-pop, .side-toc-rail, .side-toc-rail i, .side-toc-panel, .side-toc-card a, .ref-list li { transition: none; }
   }
   @media print {
-    body::before, .topbar, #con, .side-toc, .cite-pop { display: none !important; }
+    body::before, .topbar, #con, .side-toc, .cite-pop, .video-embed .video-frame { display: none !important; }
     .rise { animation: none; opacity: 1; transform: none; }
     details.deep > div { display: block; }
   }
@@ -390,6 +400,12 @@
         <li class="hide-s"><a href="index.html#writing">writing</a></li>
         <li class="hide-s"><a href="https://github.com/fecmtc" rel="me noopener">github</a></li>
         <li><button type="button" id="conBtn" aria-controls="con" aria-expanded="false"><kbd>~</kbd>console</button></li>
+        <li>
+          <button type="button" class="theme-btn" id="themeBtn" aria-label="Switch to dark theme" title="Switch to dark theme">
+            <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 13.2A8.5 8.5 0 1 1 10.8 3.5a6.6 6.6 0 0 0 9.7 9.7Z"/></svg>
+            <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></svg>
+          </button>
+        </li>
       </ul>
     </nav>
   </div>
@@ -404,7 +420,7 @@
       You Cannot Hide a Player and Show Them at the Same Time
     </h1>
     <p class="post-sub rise" style="--i:2">Server-side wallhack mitigation, OpenMoHAA, and the uncertainty between two packets</p>
-    <p class="post-meta rise" style="--i:3">Essay · Netcode / Bayesian modelling · <span id="reading">~110 min read</span> · September 2026 · by <b>mtc</b></p>
+    <p class="post-meta rise" style="--i:3">Essay · Netcode / Bayesian modelling · <span id="reading">~115 min read</span> · September 2026 · by <b>mtc</b></p>
     <p class="post-lede rise" style="--i:4">
       A server can hide an enemy from cheats by refusing to send that enemy. But the legitimate client still
       needs the data before the enemy walks around the corner, and it needs it early enough to receive it,
@@ -509,8 +525,8 @@
         Medal of Honor: Allied Assault (MOHAA) netcode behaves when a server tries to hide players
         from clients that should not see them yet. I chose MOHAA because it is the first-person
         shooter and the codebase I know best, not because it is special: the open-source
-        reimplementation OpenMoHAA [<a class="cite" href="#ref-openmohaa-repo">1</a>] inherits the Quake III / ioquake3 networking
-        skeleton [<a class="cite" href="#ref-ioq3-repo">2</a>, <a class="cite" href="#ref-q3-source">3</a>], and almost everything below applies, with different names
+        reimplementation <a href="https://github.com/openmoh/openmohaa" target="_blank" rel="noopener">OpenMoHAA</a> inherits the <a href="https://github.com/id-Software/Quake-III-Arena" target="_blank" rel="noopener">Quake III</a> / <a href="https://github.com/ioquake/ioq3" target="_blank" rel="noopener">ioquake3</a> networking
+        skeleton, and almost everything below applies, with different names
         and constants, to any authoritative client/server shooter. It is not official OpenMoHAA
         documentation, it does not speak for the project's developers, and it should never be read as
         such. Where I quote source code I quote a pinned revision and link to it, so that anyone can
@@ -518,40 +534,35 @@
       </p>
       <p>
         I also want to be honest about the epistemic status of what follows. I have read the code,
-        traced the paths by hand, and written down the arithmetic, but I have not yet instrumented a
-        live server to measure the quantities this post is ultimately about. My interpretation may be
-        incomplete or mistaken in places, and some observations I flag are exactly the kind of thing
-        that looks like a bug on paper and turns out to be intentional once you know the history.
-        Corrections, counterexamples, measurements, evidence from the source history, and suggestions
-        for better experiments are all welcome; the last section says how to send them.
+        traced the paths by hand, and written down the math myself, but I have not yet instrumented a
+        live server to measure the quantities this post is ultimately about. 
+        I am fully aware that my interpretation may be incomplete or mistaken in places, and some observations I flag are exactly the kind of thing that looks like a bug on paper and turns out to be intentional once you know the history. So, keep that in mind.
+        In any case, corrections and suggestions are all welcome. Just reach out to me on <a href="https://discord.gg/dSHXXUNfKf" target="_blank">Discord</a>.
       </p>
       <p>
-        The question is old and the ingredients are all published. Cheating in online games has been
+        The question is old and most of the ingredients are all public. Cheating in online games has been
         described as a problem of misplaced trust since at least Yan and Randell's taxonomy
-        [<a class="cite" href="#ref-yan-randell-2005">4</a>]: a wallhack works because the client is handed state it is not entitled
+        [<a class="cite" href="#ref-yan-randell-2005">1</a>] (but of course it is as old as games exist): a wallhack works because the client is handed state it is not entitled
         to use, and the client is not trustworthy. Studies of state exposure ask how far ahead of
-        legitimate need that state is preloaded [<a class="cite" href="#ref-epita-anticheat">5</a>, <a class="cite" href="#ref-blackmirror">6</a>]. Server-side
+        legitimate need that state is preloaded [<a class="cite" href="#ref-epita-anticheat">2</a>, <a class="cite" href="#ref-blackmirror">3</a>]. Server-side
         visibility filtering, the family this post is about, answers by not sending the state at all
         until it is needed, in forms ranging from MOHAA's own 2.30 patch and OpenMoHAA's
-        reimplementation [<a class="cite" href="#ref-opm-docs-config">7</a>] to community occlusion culling for Source
-        [<a class="cite" href="#ref-cornerculling">8</a>, <a class="cite" href="#ref-csgo-occlude">9</a>] and Riot's Fog of War for VALORANT [<a class="cite" href="#ref-riot-fog">10</a>]. Snapshot
+        reimplementation [<a class="cite" href="#ref-opm-docs-config">4</a>] to community <a href="https://github.com/87andrewh/CornerCulling" target="_blank" rel="noopener">occlusion culling</a> for Source
+        [<a class="cite" href="#ref-csgo-occlude">5</a>] and Riot's Fog of War for VALORANT [<a class="cite" href="#ref-riot-fog">6</a>]. Snapshot
         interpolation and client prediction, the machinery that decides how early "needed" is, were
-        laid out by Bernier [<a class="cite" href="#ref-bernier-2001">11</a>], the Valve wiki [<a class="cite" href="#ref-valve-wiki">12</a>], Gambetta
-        [<a class="cite" href="#ref-gambetta">13</a>], and van Waveren [<a class="cite" href="#ref-vanwaveren-2006">14</a>]. Probabilistic checking of clients
-        [<a class="cite" href="#ref-laurens-2007">15</a>], cryptographic hidden-state protocols [<a class="cite" href="#ref-darkforest">16</a>, <a class="cite" href="#ref-ingonyama-fog">17</a>], and
-        trusted client execution [<a class="cite" href="#ref-blackmirror">6</a>] attack the same trust problem from other sides.
+        laid out by Bernier [<a class="cite" href="#ref-bernier-2001">7</a>], the Valve wiki [<a class="cite" href="#ref-valve-wiki">8</a>], Gambetta
+        [<a class="cite" href="#ref-gambetta">9</a>], and van Waveren [<a class="cite" href="#ref-vanwaveren-2006">10</a>]. Probabilistic checking of clients
+        [<a class="cite" href="#ref-laurens-2007">11</a>], cryptographic hidden-state protocols [<a class="cite" href="#ref-darkforest">12</a>, <a class="cite" href="#ref-ingonyama-fog">13</a>], and
+        trusted client execution [<a class="cite" href="#ref-blackmirror">3</a>] attack the same trust problem from other sides.
         And Bayesian modelling under uncertain, imperfect measurements is a mature field with good
-        textbooks [<a class="cite" href="#ref-gelman-bda3">18</a>, <a class="cite" href="#ref-mcelreath">19</a>].
+        textbooks [<a class="cite" href="#ref-gelman-bda3">14</a>, <a class="cite" href="#ref-mcelreath">15</a>].
       </p>
       <p>
         Existing work studies information exposure, state dissemination, interpolation delay,
         visibility filtering, probabilistic verification, and secure hidden-state handling. A unified
         probabilistic treatment of server disclosure, cheat accessibility, true visibility, and first
         legitimate rendering appears less developed in the public FPS literature. I do not claim
-        novelty for any single ingredient. What I try to contribute is the connection: one timing
-        vocabulary, four clocks and three delays, in which the server's disclosure policy, the cheat's
-        window, the legitimate client's lateness, and the measurement problem can be written down
-        together for a centralized shooter, and then checked against a real codebase.
+        novelty for any single ingredient. What I try to contribute is to the scientific knowledge of netcode itself through a (optional to this post) mathematical lens. 
       </p>
 
       <div class="aside-box" id="how-to-read">
@@ -600,6 +611,40 @@
         After it, if the release was too late, the legitimate defender sees the attacker appear out
         of thin air, already aiming.
       </p>
+
+      <div class="viz-card" id="wallhack-illustration">
+        <h4>What a wallhack sees, on two kinds of server</h4>
+        <p class="sub">The same instant, drawn by a wallhack on the defender's machine. The attacker is behind the wall in both panels; the only difference is what the server put in the packets.</p>
+        <div class="twoup">
+          <svg viewBox="0 0 360 240" role="img" aria-label="Top-down view: on a traditional server the wallhack draws the enemy through the wall, marked with a dashed box">
+            <rect x="1" y="1" width="358" height="238" rx="10" fill="var(--fig-panel)" stroke="var(--fig-rule)"/>
+            <text x="16" y="26" style="font:700 11px var(--sans);fill:var(--plum);letter-spacing:.05em">TRADITIONAL SERVER</text>
+            <text x="16" y="42" style="font:400 10.5px var(--sans);fill:var(--fig-muted)">sends every enemy your region could possibly see</text>
+            <line x1="61" y1="184" x2="261" y2="102" stroke="var(--rust)" stroke-width="1.6" stroke-dasharray="5 4" opacity=".9"/>
+            <rect x="150" y="56" width="34" height="108" rx="2" fill="var(--fig-wall)"/>
+            <text x="167" y="114" text-anchor="middle" style="font:600 9.5px var(--sans);fill:var(--fig-wall-text)">wall</text>
+            <circle cx="52" cy="188" r="9" fill="var(--sky)"/>
+            <text x="52" y="212" text-anchor="middle" style="font:700 11px var(--sans);fill:var(--sky)">you</text>
+            <rect x="252" y="78" width="36" height="36" rx="4" fill="none" stroke="var(--rust)" stroke-width="1.6" stroke-dasharray="4 3"/>
+            <circle cx="270" cy="96" r="9" fill="var(--rose)"/>
+            <text x="270" y="134" text-anchor="middle" style="font:600 10.5px var(--sans);fill:var(--rust)">drawn through the wall</text>
+            <text x="16" y="228" style="font:400 10.5px var(--sans);fill:var(--fig-muted)">the position was sent, so the cheat can draw it</text>
+          </svg>
+          <svg viewBox="0 0 360 240" role="img" aria-label="Top-down view: on a withholding server the same spot shows nothing, because the enemy's position was never sent">
+            <rect x="1" y="1" width="358" height="238" rx="10" fill="var(--fig-panel)" stroke="var(--fig-rule)"/>
+            <text x="16" y="26" style="font:700 11px var(--sans);fill:var(--teal);letter-spacing:.05em">WITHHOLDING SERVER</text>
+            <text x="16" y="42" style="font:400 10.5px var(--sans);fill:var(--fig-muted)">sends an enemy only just before you could see them</text>
+            <rect x="150" y="56" width="34" height="108" rx="2" fill="var(--fig-wall)"/>
+            <text x="167" y="114" text-anchor="middle" style="font:600 9.5px var(--sans);fill:var(--fig-wall-text)">wall</text>
+            <circle cx="52" cy="188" r="9" fill="var(--sky)"/>
+            <text x="52" y="212" text-anchor="middle" style="font:700 11px var(--sans);fill:var(--sky)">you</text>
+            <circle cx="270" cy="96" r="9" fill="var(--fig-hollow)" stroke="var(--grey)" stroke-width="1.8" stroke-dasharray="3 3"/>
+            <text x="270" y="134" text-anchor="middle" style="font:600 10.5px var(--sans);fill:var(--fig-muted)">nothing to draw</text>
+            <text x="16" y="228" style="font:400 10.5px var(--sans);fill:var(--fig-muted)">the position never arrived on your machine</text>
+          </svg>
+        </div>
+        <p class="fig-caption">A wallhack can only draw what the server sent. The traditional rule sends any enemy who could <em>in principle</em> be seen from your part of the map (section 3.1 explains that test); a withholding server, such as OpenMoHAA under <code>sv_netoptimize</code>, keeps the enemy out of your packets until just before they actually step out. The price of "just before" is the subject of this post.</p>
+      </div>
       <p>
         There is no setting that makes both problems vanish. Every state-withholding implementation
         has the same kind of timing tradeoff, whether it is a 2003 patch for a World War II shooter or
@@ -607,13 +652,13 @@
         optimized, but it cannot be switched off, and I think treating it as a switch ("just enable
         anti-wallhack") is why discussions about it tend to go badly. The rest of the post tries to
         replace the switch with a number, then to replace the number with a distribution, and finally
-        to say how the distribution could be measured on a real server.
+        to say how the distribution could be measured on a real server (that would be very cool).
       </p>
       <p>
         Two things this post is not about. It is not about aimbots, triggerbots, or any cheat that
         acts on state the client legitimately has; withholding cannot help there. And it is not about
-        the general anti-cheat question of detecting modified clients [<a class="cite" href="#ref-riot-anticheat">20</a>]. It is
-        about one narrow, well-posed thing: the timing of disclosure.
+        the general anti-cheat question of detecting modified clients [<a class="cite" href="#ref-riot-anticheat">16</a>]. It is
+        about one narrow, well-posed thing: the timing of disclosure. Finally, if you are reading this in the hope of learning how bypass an anti-cheat, I have bad news: anti-cheats do not share the same limitations as client-based cheats since they can rely on server-side information. Good luck with that.
       </p>
     </div>
   </section>
@@ -630,37 +675,45 @@
         <code>sv_fps 20</code> that is one step every 50 ms. After each step it builds, for each
         connected player, a <em>snapshot</em>: a compact description of that player's own state plus
         the entities the server has decided that player should know about, and it sends the snapshot
-        as a UDP packet [<a class="cite" href="#ref-sanglard-q3">21</a>, <a class="cite" href="#ref-jfedor">22</a>, <a class="cite" href="#ref-swinburne-q3">23</a>]. Snapshots are delta-compressed against
+        as a UDP packet [<a class="cite" href="#ref-sanglard-q3">17</a>, <a class="cite" href="#ref-jfedor">18</a>, <a class="cite" href="#ref-swinburne-q3">19</a>]. Snapshots are delta-compressed against
         the last one the client acknowledged, so a lost packet costs a little bandwidth rather than a
-        resend [<a class="cite" href="#ref-unlagged">24</a>].
+        resend [<a class="cite" href="#ref-unlagged">20</a>].
       </p>
       <p>
         Your machine, meanwhile, draws far more than twenty frames per second, and it has to draw
         other players at moments for which no snapshot exists. The standard answer, which Bernier
-        wrote up for Half-Life [<a class="cite" href="#ref-bernier-2001">11</a>] and Valve later documented in detail
-        [<a class="cite" href="#ref-valve-wiki">12</a>], is <em>interpolation</em>: the client deliberately holds its notion of "now"
+        wrote up for Half-Life [<a class="cite" href="#ref-bernier-2001">7</a>] and Valve later documented in detail
+        [<a class="cite" href="#ref-valve-wiki">8</a>], is <em>interpolation</em>: the client deliberately holds its notion of "now"
         a little behind the newest snapshot, so that for any rendered frame it has one snapshot just
         before and one just after, and it blends the two. Other players are therefore always drawn
         slightly in the past. Your own player is the exception: to keep controls responsive, the
         client runs your inputs through the same movement code the server uses and shows you the
         predicted result immediately, correcting itself if the server later disagrees
-        [<a class="cite" href="#ref-gambetta">13</a>, <a class="cite" href="#ref-tariq-feature">25</a>]. Gambetta's articles come with a small live demo of both
-        mechanisms, and if you want the MOHAA-shaped version of the same picture, I built one
-        [<a class="cite" href="#ref-fecmtc-demo">26</a>].
+        [<a class="cite" href="#ref-gambetta">9</a>, <a class="cite" href="#ref-tariq-feature">21</a>]. Gambetta's articles come with a small live demo of both
+        mechanisms, and if you want the MOHAA-shaped version of the same picture, I built one <a href="https://fecmtc.github.io/mohaa-netcode-demo/" target="_blank">here</a>.
       </p>
+
+      <figure class="video-embed">
+        <div class="video-frame">
+          <iframe src="https://www.youtube-nocookie.com/embed/hibDAXaHhnY" title="Tariq10x — How a Software Feature Changed Online Gaming Forever (YouTube)" loading="lazy" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+        </div>
+        <figcaption>If you would rather watch these two ideas than read them: Tariq10x's <em>How a Software Feature Changed Online Gaming Forever</em> [<a class="cite" href="#ref-tariq-feature">21</a>] tells the story of client prediction with game footage. The rest of this section is the same machinery, slowed down.</figcaption>
+      </figure>
       <p>
         Now the wallhack. Which entities go into your snapshot is decided by the server, and the
         traditional criterion is coarse: the map is pre-divided into regions, and the compiler records
         which regions could possibly see which others, the <em>potentially visible set</em>
-        [<a class="cite" href="#ref-wiki-pvs">27</a>]. An enemy in a region that could in principle be seen from yours is sent, even
+        [<a class="cite" href="#ref-wiki-pvs">22</a>]. An enemy in a region that could in principle be seen from yours is sent, even
         if right now a crate, a doorway, or a thin interior wall is between you. The enemy's position
         is then sitting in your machine's memory. A wallhack is nothing more than a program that reads
         that memory and draws what it finds. The server cannot stop your machine from reading its own
         memory; the only lever it has is to not send the data. That lever is what MOHAA 2.30 pulled,
         and what OpenMoHAA reimplements under the name <code>sv_netoptimize</code>
-        [<a class="cite" href="#ref-opm-docs-config">7</a>, <a class="cite" href="#ref-opm-docs-diff">28</a>]. The trouble is that "not sending" collides with
+        [<a class="cite" href="#ref-opm-docs-config">4</a>, <a class="cite" href="#ref-opm-docs-diff">23</a>]. The trouble is that "not sending" collides with
         "interpolating", because interpolation needs the data <em>before</em> it is needed on
-        screen.
+        screen. If you would like to see a modern production version of the idea before diving
+        into MOHAA's, Riot's Fog of War write-up [<a class="cite" href="#ref-riot-fog">6</a>]
+        demonstrates it with short animated clips of an enemy being withheld and then revealed.
       </p>
 
       <h3 id="clocks-corner"><span class="sec-n">3.2</span> The corner, step by step <span class="lvl-tag lvl-1">Level 1</span></h3>
@@ -738,14 +791,16 @@
             <tr><td>\(H = V - S\)</td><td>disclosure lead: how early the server released, relative to true visibility</td><td></td></tr>
             <tr><td>\(G_A = V - A = H - D_A\)</td><td>the cheat's lead (negative means the cheat learned nothing early)</td><td></td></tr>
             <tr><td>\(G_R = V - R = H - D_R\)</td><td>the legitimate margin (negative means the target appeared late)</td><td></td></tr>
-            <tr><td>\(W = (G_A)^+ = \max(H - D_A, 0)\)</td><td>the cheat's window</td><td></td></tr>
-            <tr><td>\(L = (-G_R)^+ = \max(D_R - H, 0)\)</td><td>the legitimate lateness</td><td></td></tr>
+            <tr><td>\(W = [G_A]_+ = \max(H - D_A, 0)\)</td><td>the cheat's window</td><td></td></tr>
+            <tr><td>\(L = [-G_R]_+ = \max(D_R - H, 0)\)</td><td>the legitimate lateness</td><td></td></tr>
           </tbody>
         </table>
       </div>
       <p>
-        Two remarks. First, \(H\) is the only quantity the server controls, and even that only
-        indirectly: it chooses a rule, and the rule plus the geometry produces \(H\). Second, the
+        Three remarks. First, the bracket \([x]_+\) is shorthand for \(\max(x, 0)\), the positive
+        part of \(x\): a window cannot be negative, and neither can a lateness, so both are clipped
+        at zero. Second, \(H\) is the only quantity the server controls, and even that only
+        indirectly: it chooses a rule, and the rule plus the geometry produces \(H\). Third, the
         two outcomes are driven by the same \(H\) in opposite directions, through delays the server
         does not choose and cannot observe exactly. That is the entire tension, and section 4 makes
         it precise.
@@ -757,34 +812,37 @@
           <p class="dq">Question: what exactly does the legitimate client compute between two snapshots, and at what moment does the data it needs become available in memory?</p>
           <p>
             Let the server sample a remote player's position at snapshot times \(t_k\), giving
-            \(p_k \in \mathbb{R}^3\). For a render time \(t \in [t_k, t_{k+1})\) the client forms
+            points \(u_k \in \mathbb{R}^3\) (I write \(u\) for positions throughout the blue
+            boxes). For a render time \(t \in [t_k, t_{k+1})\) the client forms
           </p>
-          $$ r(t) = (1-f)\,p_k + f\,p_{k+1}, \qquad f = \frac{t - t_k}{t_{k+1} - t_k} \in [0,1), $$
+          $$ r(t) = (1-f)\,u_k + f\,u_{k+1}, \qquad f = \frac{t - t_k}{t_{k+1} - t_k} \in [0,1), \tag{1} $$
           <p>
-            a convex combination of the two samples: \(r(t)\) lies on the segment between them, and
-            \(r\) is affine in \(f\). This is a linear operator on the pair \((p_k, p_{k+1})\), so it
-            commutes with translations and rotations of the map, which is why the same code works
-            for every corner. If the true path \(p(\cdot)\) is twice differentiable on
-            \([t_k, t_{k+1}]\), the classical error bound for linear interpolation gives
+            a convex combination of the two samples: \(r(t)\) sits on the straight segment between
+            them and slides from \(u_k\) to \(u_{k+1}\) as \(f\) goes from 0 to 1. Because the two
+            weights add up to one, the recipe commutes with translations and rotations of the map,
+            which is why the same code works for every corner. How wrong can the straight segment
+            be? If the true path \(u(\cdot)\) is twice differentiable on \([t_k, t_{k+1}]\), the
+            <a href="https://en.wikipedia.org/wiki/Linear_interpolation#Linear_interpolation_as_an_approximation" target="_blank" rel="noopener">standard error bound for linear interpolation</a>
+            gives
           </p>
-          $$ \|p(t) - r(t)\| \;\le\; \frac{(t_{k+1}-t_k)^2}{8}\,\max_{s\in[t_k,t_{k+1}]}\|\ddot p(s)\|, $$
+          $$ \|u(t) - r(t)\| \;\le\; \frac{(t_{k+1}-t_k)^2}{8}\,\max_{s\in[t_k,t_{k+1}]}\|\ddot u(s)\|, \tag{2} $$
           <p>
-            so at 50 ms spacing a player accelerating at \(3000\) units/s\(^2\) (roughly a hard strafe
-            reversal) is misplaced by at most \(0.0025/8 \cdot 3000 \approx 0.94\) units. The
-            rendering error is small; what is not small is the time offset. The renderer needs
-            \(p_{k+1}\) to draw any \(t > t_k\), so it must wait until the snapshot carrying
-            \(p_{k+1}\) has arrived <em>and</em> its own clock has advanced to \(t_k\). That waiting
-            is the render delay \(B\).
+            where \(\ddot u\) is the acceleration along the true path. The numbers are worth
+            plugging in once. At the default snapshot rate the spacing is
+            \(t_{k+1} - t_k = 50\) ms \(= 0.05\) s, so the prefactor is
+            \(0.05^2/8 \approx 0.0003\) s\(^2\). A hard strafe reversal is an acceleration of
+            roughly 3000 units/s\(^2\), and \(0.0003 \times 3000 \approx 0.94\) units. A player
+            model is about 30 units wide, so even the sharpest turn a player can make displaces
+            the interpolated body by a thirtieth of its width: as a rendering method,
+            interpolation is essentially exact.
           </p>
           <p>
-            The cheat does not wait. The entity state written by the snapshot parser at time \(A\)
-            is the same array the renderer will read later (in OpenMoHAA, the <code>nextState</code>
-            field of the entity, section 6.2). Formally, if \(\mathcal{F}_t\) is the information
-            available on the client at time \(t\), the target's position enters \(\mathcal{F}_A\); the
-            legitimate render is a function of \(\mathcal{F}_R\) with \(R = A + B\), but a cheat is a
-            function of \(\mathcal{F}_A\) itself. Withholding on the server shifts \(A\); nothing on
-            the client can make \(B\) negative. That asymmetry, and not any particular bug, is why the
-            legitimate margin \(G_R\) is always \(B\) smaller than the cheat's lead \(G_A\).
+            What is not small is the time cost. The renderer needs \(u_{k+1}\) to draw any
+            \(t > t_k\), so it must wait until the snapshot carrying \(u_{k+1}\) has arrived
+            <em>and</em> its own clock has advanced to \(t_k\). That waiting is the render delay
+            \(B\), and it binds only the legitimate path: a cheat reads the position out of memory
+            the moment the snapshot is parsed, at \(A\), and waits for nothing. Withholding on the
+            server moves \(A\); nothing on the client can make \(B\) negative.
           </p>
         </div>
       </details>
@@ -836,23 +894,30 @@
         <div>
           <p class="dq">Question: if the delays are random and I pay \(c_W\) per millisecond of cheat window and \(c_L\) per millisecond of lateness, which lead \(h\) minimises expected cost?</p>
           <p>
-            Write \(D_A\) and \(D_R = D_A + B\) for the random delays of a crossing, with continuous
-            distribution functions \(F_{D_A}\) and \(F_{D_R}\). For a fixed lead \(h\) the expected cost is
+            Write \(D_A\) for the random delivery delay of a crossing and \(D_R = D_A + B\) for the
+            random delay to first render, with distribution functions \(F_{D_A}\) and \(F_{D_R}\),
+            assumed continuous and strictly increasing so that quantiles are unambiguous. If the
+            server releases with lead \(h\), the crossing produces a cheat window \([h - D_A]_+\)
+            and a lateness \([D_R - h]_+\), so the expected cost is
           </p>
-          $$ J(h) = c_W\,\mathbb{E}\big[(h - D_A)^+\big] + c_L\,\mathbb{E}\big[(D_R - h)^+\big]. $$
+          $$ J(h) = c_W\,\mathbb{E}\big[[h - D_A]_+\big] + c_L\,\mathbb{E}\big[[D_R - h]_+\big]. \tag{3} $$
           <p>
-            Both terms are convex in \(h\): \(h \mapsto (h-d)^+\) and \(h \mapsto (d-h)^+\) are convex for
-            every fixed \(d\), and expectations preserve convexity. So \(J\) is convex and any
-            stationary point is a global minimum. Differentiating under the expectation (the
-            integrands are Lipschitz in \(h\), so dominated convergence applies),
+            Now nudge the lead. One more millisecond of \(h\) adds a millisecond of window on
+            every crossing that was already delivered in time (\(D_A < h\)) and removes a
+            millisecond of lateness on every crossing that was still going to be late
+            (\(D_R > h\)). So the marginal cost of the nudge is
           </p>
-          $$ J'(h) = c_W\,\mathbb{P}(D_A < h) - c_L\,\mathbb{P}(D_R > h) = c_W F_{D_A}(h) - c_L\big(1 - F_{D_R}(h)\big). $$
+          $$ J'(h) = c_W\,\mathbb{P}(D_A < h) - c_L\,\mathbb{P}(D_R > h) = c_W F_{D_A}(h) - c_L\big(1 - F_{D_R}(h)\big). \tag{4} $$
           <p>
-            Setting \(J'(h^*) = 0\) gives \(c_W F_{D_A}(h^*) = c_L\,(1 - F_{D_R}(h^*))\). In the
-            special case where the render delay is small compared with the spread of delivery, so
-            that \(D_A \approx D_R \equiv D\), this collapses to the newsvendor condition
+            As \(h\) grows, the first probability rises and the second falls, so \(J'\) only ever
+            increases; it is negative for small \(h\) (everything is late, releasing earlier only
+            helps) and positive for large \(h\) (everything leaks, releasing earlier only hurts),
+            so it crosses zero once, and that crossing is the global minimum. There the two sides
+            balance: \(c_W F_{D_A}(h^*) = c_L\,(1 - F_{D_R}(h^*))\). In the special case where the
+            render delay is small compared with the spread of delivery, so that
+            \(D_A \approx D_R \equiv D\), this collapses to the balance condition
           </p>
-          $$ F_D(h^*) = \frac{c_L}{c_W + c_L}. \qquad\blacksquare $$
+          $$ F_D(h^*) = \frac{c_L}{c_W + c_L}. \qquad\blacksquare \tag{5} $$
           <p>
             Read it as a fraction: if lateness costs three times as much as leakage, release early
             enough that three quarters of crossings are delivered in time. Two consequences matter
@@ -870,23 +935,64 @@
         <div>
           <p class="dq">Question: can I demand that the cheat window rarely exceed \(w\) <em>and</em> that lateness rarely exceed \(\ell\), and what does "rarely" cost?</p>
           <p>
-            Suppose we want \(\mathbb{P}(W > w) \le \delta\) and \(\mathbb{P}(L > \ell) \le \varepsilon\).
-            Since \(W > w \iff D_A < H - w\), the first condition reads \(F_{D_A}(H - w) \le \delta\),
-            that is \(H \le F_{D_A}^{-1}(\delta) + w\). Since \(L > \ell \iff D_R > H + \ell\), the
-            second reads \(1 - F_{D_R}(H + \ell) \le \varepsilon\), that is \(H \ge F_{D_R}^{-1}(1-\varepsilon) - \ell\).
-            A lead satisfying both exists if and only if
+            Suppose an operator writes down two service targets: the cheat window may exceed some
+            tolerated \(w\) (say 30 ms) on at most a fraction \(\delta\) of crossings, and the
+            lateness may exceed \(\ell\) on at most a fraction \(\varepsilon\):
           </p>
-          $$ F_{D_R}^{-1}(1-\varepsilon) - \ell \;\le\; F_{D_A}^{-1}(\delta) + w. $$
+          $$ \mathbb{P}(W > w) \le \delta \qquad\text{and}\qquad \mathbb{P}(L > \ell) \le \varepsilon. \tag{6} $$
           <p>
-            The left side is an upper quantile of the <em>larger</em> variable \(D_R = D_A + B\); the
-            right side is a lower quantile of the smaller one. Their difference is at least the
-            inter-quantile spread of \(D_A\) between levels \(\delta\) and \(1-\varepsilon\), plus the
-            corresponding contribution of \(B\). So the targets are feasible only if
-            \(w + \ell\) exceeds roughly the spread of delivery delay across the population plus a
-            typical render delay. With \(\delta = \varepsilon = 0.05\), a delivery spread of 60 ms and
-            \(B\) around 50 ms, no rule can promise both \(w = 30\) ms and \(\ell = 30\) ms. This is
-            the theorem of section 4.1 again, in the language of quantiles, and it is why I think
-            the right output of the analysis is a curve, not a setting.
+            One piece of notation, because everything below is quantiles. \(F_{D_A}^{-1}(q)\) is
+            the delay that a fraction \(q\) of crossings stays below: \(F_{D_A}^{-1}(0.05)\) is a
+            <em>fast</em> delivery, beaten only by one crossing in twenty, and
+            \(F_{D_R}^{-1}(0.95)\) is a <em>slow</em> first render, exceeded only by one in
+            twenty. As in box D2, I take the distribution functions continuous and strictly
+            increasing, so these are single well-defined numbers. Now take the two targets one at
+            a time, for a fixed lead \(H\).
+          </p>
+          <p>
+            <b>The window target caps \(H\) from above.</b> The window exceeds \(w\) exactly when
+            the release beats the delivery by more than \(w\):
+            \(W = [H - D_A]_+ > w \iff D_A < H - w\). The probability of that event is
+            \(F_{D_A}(H - w)\), and demanding it be at most \(\delta\) says \(H - w\) must not
+            reach past the fast \(\delta\)-quantile of delivery:
+          </p>
+          $$ H \;\le\; F_{D_A}^{-1}(\delta) + w. \tag{7} $$
+          <p>
+            In words: the lead may exceed the tolerated window only on the very fastest
+            deliveries, because those are exactly the crossings on which the cheat gets more
+            than \(w\).
+          </p>
+          <p>
+            <b>The lateness target props \(H\) up from below.</b> The lateness exceeds \(\ell\)
+            exactly when the delay to first render beats the lead by more than \(\ell\):
+            \(L = [D_R - H]_+ > \ell \iff D_R > H + \ell\). The probability of that is
+            \(1 - F_{D_R}(H + \ell)\), and demanding it be at most \(\varepsilon\) says
+            \(H + \ell\) must reach at least the slow \((1-\varepsilon)\)-quantile of the render
+            delay:
+          </p>
+          $$ H \;\ge\; F_{D_R}^{-1}(1 - \varepsilon) - \ell. \tag{8} $$
+          <p>
+            In words: the lead must cover even the slowest renders, short of them by at most the
+            tolerated \(\ell\).
+          </p>
+          <p>
+            A ceiling and a floor. A lead satisfying both targets exists if and only if the floor
+            sits below the ceiling,
+          </p>
+          $$ F_{D_R}^{-1}(1-\varepsilon) - \ell \;\le\; F_{D_A}^{-1}(\delta) + w,
+             \qquad\text{equivalently}\qquad
+             w + \ell \;\ge\; F_{D_R}^{-1}(1-\varepsilon) - F_{D_A}^{-1}(\delta). \tag{9} $$
+          <p>
+            The right side of the second form is a slow quantile of the <em>larger</em> delay
+            \(D_R = D_A + B\) minus a fast quantile of the smaller one, so it is at least the
+            \(\delta\)-to-\((1-\varepsilon)\) spread of the delivery delay alone; if the render
+            delay were a constant \(b\), it would be exactly that spread plus \(b\). Round
+            numbers: with \(\delta = \varepsilon = 0.05\), a delivery delay whose 5th-to-95th
+            percentile spread is 60 ms, and \(B\) around 50 ms, the right side is about 110 ms,
+            and the targets \(w = \ell = 30\) ms offer only 60. No lead exists; the demands were
+            contradictory before any rule was chosen. This is the theorem of section 4.1 again,
+            in the language of quantiles, and it is why I think the right output of the analysis
+            is a curve of feasible pairs, not a single setting.
           </p>
         </div>
       </details>
@@ -900,7 +1006,7 @@
       <p>
         Everything in this section is read from one revision of the OpenMoHAA repository, commit
         <a class="srcl" href="https://github.com/openmoh/openmohaa/tree/667c50f9b24cf1d4ead8429412b6ca7fa29e3b8f" target="_blank" rel="noopener"><code>667c50f9</code></a>
-        of 2026-04-13 [<a class="cite" href="#ref-openmohaa-repo">1</a>], and every listing links to that commit rather than
+        of 2026-04-13, and every listing links to that commit rather than
         to a moving branch. I quote the smallest range that supports a claim, I never edit the
         quoted text, and under each listing I say what I think it shows and what it does not.
         If the project changes any of this, the listings will still be true of that commit and
@@ -910,7 +1016,7 @@
         The feature has no "wallhack" in its name anywhere in the code or commit history. The
         project documentation calls it network optimization, files it under a heading that also
         says "Antichams", and traces it to the 2.30 patch of Allied Assault Breakthrough
-        [<a class="cite" href="#ref-opm-docs-config">7</a>, <a class="cite" href="#ref-opm-docs-diff">28</a>]:
+        [<a class="cite" href="#ref-opm-docs-config">4</a>, <a class="cite" href="#ref-opm-docs-diff">23</a>]:
       </p>
       <pre class="codeblk" tabindex="0" data-repo="opm" data-path="docs/markdown/03-configuration/01-configuration.md" data-start="59" data-end="67" aria-label="01-configuration.md lines 59 to 67, verbatim"><code><span class="cl" data-n="59">### Optimization / Antichams</span><span class="cl" data-n="60"></span><span class="cl" data-n="61">A new variable, `sv_netoptimize`, enables a feature that optimizes network bandwidth by not sending players information about others they can't see. For each client, the server optimizes by only transmitting data about players within their view. Clients will not receive information about players they can't see. This feature also helps protect against cheaters:</span><span class="cl" data-n="62"></span><span class="cl" data-n="63">- `set sv_netoptimize 0`: Disable optimization - the default</span><span class="cl" data-n="64">- `set sv_netoptimize 1`: Enable optimization for entities that are moving</span><span class="cl" data-n="65">- `set sv_netoptimize 2`: Enable optimization, always</span><span class="cl" data-n="66"></span><span class="cl" data-n="67">This option exists since **Medal of Honor: Allied Assault Breakthrough** 2.30, however it was improved in OpenMoHAA: sounds like footsteps will be sent so players don't get confused.</span></code></pre>
       <p class="src-note">From <a class="srcl" href="https://github.com/openmoh/openmohaa/blob/667c50f9b24cf1d4ead8429412b6ca7fa29e3b8f/docs/markdown/03-configuration/01-configuration.md#L59-L67" target="_blank" rel="noopener"><code>docs/markdown/03-configuration/01-configuration.md</code>:59–67</a> at the pinned commit. The differences page says the same in fewer words: <a class="srcl" href="https://github.com/openmoh/openmohaa/blob/667c50f9b24cf1d4ead8429412b6ca7fa29e3b8f/docs/markdown/01-intro/04-differences.md#L334-L338" target="_blank" rel="noopener"><code>04-differences.md</code>:334–338</a>.</p>
@@ -1097,11 +1203,11 @@
             constant-velocity motion the projection is exact, \(\hat V_j = V\), so the first
             successful frame is
           </p>
-          $$ S = \min\{\, t_j : t_j \ge V - k f \,\} = f \left\lceil \frac{V - k f}{f} \right\rceil, $$
+          $$ S = \min\{\, t_j : t_j \ge V - k f \,\} = f \left\lceil \frac{V - k f}{f} \right\rceil, \tag{10} $$
           <p>
             and therefore
           </p>
-          $$ H = V - S = k f + \rho, \qquad \rho = V - k f - f\left\lceil \tfrac{V - k f}{f}\right\rceil \in (-f, 0]. $$
+          $$ H = V - S = k f + \rho, \qquad \rho = V - k f - f\left\lceil \tfrac{V - k f}{f}\right\rceil \in (-f, 0]. \tag{11} $$
           <p>
             With \(k = 3\) and \(f = 50\) ms: \(H \in (100, 150]\) ms, uniformly distributed over
             the interval if \(V\) is uniformly distributed relative to the frame grid. So even
@@ -1117,7 +1223,7 @@
             worst case. The projection can also succeed spuriously (a projected line through a
             gap the real path never crosses), giving \(H\) larger than \(k f\). Overall
           </p>
-          $$\begin{gathered} H \in (-f,\; k f\,] \quad\text{in the monotone case},\\ H \text{ unbounded above in general, but only through mis-prediction.} \end{gathered}$$
+          $$\begin{gathered} H \in (-f,\; k f\,] \quad\text{in the monotone case},\\ H \text{ unbounded above in general, but only through mis-prediction.} \end{gathered} \tag{12} $$
           <p>
             <b>The speed gate.</b> The projection branch runs only if the <em>target</em> has
             non-zero speed (<a href="#card-clientisvisible" class="lref">Listing 5</a>, L495–L498), although both endpoints are
@@ -1138,10 +1244,10 @@
             <b>Worked numbers.</b> Take \(D_A = 60\) ms and \(B \approx 60\) ms (section 6.1
             explains why \(B\) is about one snapshot period at the default rate), so
             \(D_R \approx 120\) ms. For the holder, \(H \in (100, 150]\): the cheat's window is
-            \(W = (H - D_A)^+ \in (40, 90]\) ms and lateness \(L = (D_R - H)^+ \in [0, 20)\) ms.
+            \(W = [H - D_A]_+ \in (40, 90]\) ms and lateness \(L = [D_R - H]_+ \in [0, 20)\) ms.
             For the peeker, \(H \in (-50, 0]\): \(W = 0\) and \(L \in [120, 170)\) ms. If the
             holder is on a slower link, \(D_A = 120\) ms, \(D_R \approx 180\) ms, their window
-            shrinks to \((0, 30]\) ms and their lateness grows to \((30, 80)\) ms. None of these
+            shrinks to \([0, 30]\) ms and their lateness grows to \([30, 80)\) ms. None of these
             numbers is a property of the horizon alone; each is a property of the horizon
             <em>and</em> the client's delays, which is why the horizon has to be chosen
             against a distribution (section 9).
@@ -1156,7 +1262,7 @@
         and into something else when the path curves. It is never a promise about the client,
         because the client's delay \(D_A + B\) is not an input to the rule. Valorant's design
         note on the same problem states the rule the other way round: the look-ahead is chosen
-        to exceed the viewer's expected ping [<a class="cite" href="#ref-riot-fog">10</a>]. That is a per-client horizon, and
+        to exceed the viewer's expected ping [<a class="cite" href="#ref-riot-fog">6</a>]. That is a per-client horizon, and
         the next box says what it would take here.
       </p>
 
@@ -1171,12 +1277,12 @@
             on the client side, and the server keeps <code>client->ping</code>), so it can
             condition on it. The natural rule is
           </p>
-          $$ H_i^{\text{target}} = \hat q_{D_A,i}(\alpha) + \hat B, \qquad k_i = \left\lceil \frac{H_i^{\text{target}}}{f} \right\rceil, $$
+          $$ H_i^{\text{target}} = \hat q_{D_A,i}(\alpha) + \hat B, \qquad k_i = \left\lceil \frac{H_i^{\text{target}}}{f} \right\rceil, \tag{13} $$
           <p>
             that is, choose per viewer \(i\) a horizon that covers an upper quantile \(\alpha\) of
             that viewer's delivery delay plus a nominal render delay, and round up to frames. With
-            \(\alpha\) set by the cost ratio of D2, this is the newsvendor solution applied one
-            client at a time. Each client then gets the smallest lead that keeps their lateness
+            \(\alpha\) set by the cost ratio of D2, this is the balance condition of box D2 applied
+            one client at a time. Each client then gets the smallest lead that keeps their lateness
             under control, and a low-latency client stops paying for a high-latency client's
             \(k\). The expected cost is never worse than with a single \(k\) (a single \(k\) is
             a feasible per-client rule) and is strictly better whenever delays differ.
@@ -1240,7 +1346,7 @@
       <h3 id="client-clock"><span class="sec-n">6.1</span> The client's clock has no fixed delay</h3>
       <p>
         Source engines have an explicit interpolation delay (<code>cl_interp</code>, by default
-        two snapshot periods) [<a class="cite" href="#ref-valve-wiki">12</a>]. Quake III and its descendants do not. The client
+        two snapshot periods) [<a class="cite" href="#ref-valve-wiki">8</a>]. Quake III and its descendants do not. The client
         keeps an offset between its wall clock and server time, and adjusts that offset by a
         millisecond or two on every snapshot, pushing forward when it did not run out of data
         and pulling back when it did. The render delay \(B\) is whatever that feedback loop
@@ -1386,12 +1492,13 @@
           <p>
             Let the server-written velocity be \(v_0\), sampled at command time \(t_0\), and let
             the client extrapolate for \(\tau \le \tau_{\max} = 0.1\) s. Write the true motion as
-            \(p(t_0 + \tau) = p_0 + v_0\tau + \Delta v\,\tau + \int_0^\tau\!\!\int_0^s a(u)\,du\,ds\),
-            where \(\Delta v\) is any velocity error already present at \(t_0\) (the player state
-            velocity is the value after the last processed command, which may predate the frame)
-            and \(a\) is the acceleration over the interval. Then
+            \(u(t_0 + \tau) = u_0 + v_0\tau + \Delta v\,\tau + \int_0^\tau\!\!\int_0^s a(r)\,dr\,ds\),
+            where \(u_0\) is the true position at \(t_0\), \(\Delta v\) is any velocity error
+            already present at \(t_0\) (the player state velocity is the value after the last
+            processed command, which may predate the frame) and \(a\) is the acceleration over the
+            interval. The client draws the straight line \(u_0 + v_0\tau\), so its error is
           </p>
-          $$ \|p(t_0+\tau) - (p_0 + v_0\tau)\| \;\le\; \|\Delta v\|\,\tau + \tfrac12\,a_{\max}\,\tau^2 . $$
+          $$ \|u(t_0+\tau) - (u_0 + v_0\tau)\| \;\le\; \|\Delta v\|\,\tau + \tfrac12\,a_{\max}\,\tau^2 . \tag{14} $$
           <p>
             For illustration only: at a running speed of about 250 units/s, a player who
             stops dead at \(t_0\) has \(\|\Delta v\| = 250\) and the extrapolation overshoots by
@@ -1413,8 +1520,8 @@
         The viewer's own body follows a different rule. The client does not wait for snapshots
         to move the local player; it runs the shared movement code on the inputs it has already
         sent and shows the result now, then reconciles when the server's version arrives. This
-        is the technique Bernier described for Half-Life [<a class="cite" href="#ref-bernier-2001">11</a>] and that the
-        Gambetta articles walk through with a live demo [<a class="cite" href="#ref-gambetta">13</a>]; OpenMoHAA's version
+        is the technique Bernier described for Half-Life [<a class="cite" href="#ref-bernier-2001">7</a>] and that the
+        Gambetta articles walk through with a live demo [<a class="cite" href="#ref-gambetta">9</a>]; OpenMoHAA's version
         starts from the newest snapshot it holds and replays every command the server has not yet
         acknowledged.
       </p>
@@ -1432,7 +1539,7 @@
         For the timing model, prediction means the <em>viewer's own</em> position is ahead of the
         newest snapshot rather than behind it. The peeker sees themself at the corner about
         \(D_A + B\) earlier than anyone else sees them there, which is the peeker's advantage in
-        the sense of the FDG study [<a class="cite" href="#ref-tokey-fdg24">29</a>] and Chen's follow-up [<a class="cite" href="#ref-chen-peeker">30</a>], and
+        the sense of the FDG study [<a class="cite" href="#ref-tokey-fdg24">24</a>] and Chen's follow-up [<a class="cite" href="#ref-chen-peeker">25</a>], and
         which section 9 has to keep separate from the disclosure lead: the two add up from the
         holder's point of view.
       </p>
@@ -1445,8 +1552,8 @@
     <div class="narrative-section">
       <p>
         Medal of Honor: Allied Assault was built on a licensed Quake III Arena engine, and
-        OpenMoHAA is an open-source re-implementation that borrows heavily from ioquake3 for the
-        parts id Software published [<a class="cite" href="#ref-q3-source">3</a>, <a class="cite" href="#ref-ioq3-repo">2</a>]. It is tempting to summarise the
+        OpenMoHAA is an open-source re-implementation that borrows heavily from <a href="https://github.com/ioquake/ioq3" target="_blank" rel="noopener">ioquake3</a> for the
+        parts <a href="https://github.com/id-Software/Quake-III-Arena" target="_blank" rel="noopener">id Software published</a>. It is tempting to summarise the
         relationship in one of two wrong ways: "OpenMoHAA is ioquake3 with different weapons",
         or "OpenMoHAA is its own engine". Neither survives reading the networking code. The
         skeleton is Quake III's, function for function, and in many places comment for comment:
@@ -1454,7 +1561,7 @@
         frame, a 32-entry packet history, reliable commands on a UDP netchan, a client clock that
         drifts, local prediction by command replay, and remote interpolation between two held
         snapshots. Every one of those is described in the classic write-ups of the Quake III
-        model [<a class="cite" href="#ref-sanglard-q3">21</a>, <a class="cite" href="#ref-jfedor">22</a>, <a class="cite" href="#ref-unlagged">24</a>, <a class="cite" href="#ref-swinburne-q3">23</a>] and every one of them is still
+        model [<a class="cite" href="#ref-sanglard-q3">17</a>, <a class="cite" href="#ref-jfedor">18</a>, <a class="cite" href="#ref-unlagged">20</a>, <a class="cite" href="#ref-swinburne-q3">19</a>] and every one of them is still
         recognisable here. What changed is the <em>state</em> that flows through the skeleton
         and the <em>policies</em> applied at three or four junctions, and those changes are
         exactly the ones that matter for a first reveal. This section lists them, then shows
@@ -1586,7 +1693,7 @@
         learn where another player is: is the entity in an area connected to yours, and is one
         of its clusters in your potentially visible set. That is the model in which wallhacks
         are cheap, and in which the peeker's-advantage literature was mostly written
-        [<a class="cite" href="#ref-tokey-fdg24">29</a>]. The right column adds a distance and direction classifier for every
+        [<a class="cite" href="#ref-tokey-fdg24">24</a>]. The right column adds a distance and direction classifier for every
         entity, a per-player line-of-sight test with memory and look-ahead, and an audio side
         channel for the players it withholds, all evaluated from the eye position rather than
         the origin. Nothing in the right column has a counterpart on the left, and the client
@@ -1598,12 +1705,12 @@
       </p>
       <p>
         Two more references belong here for readers who want to go beyond what I cover. The
-        Unlagged project's networking primer [<a class="cite" href="#ref-unlagged">24</a>] and the sh-unlagged mod
-        [<a class="cite" href="#ref-sh-unlagged">31</a>] are the classic treatment of the <em>other</em> half of the fairness
+        Unlagged project's networking primer [<a class="cite" href="#ref-unlagged">20</a>] and the <a href="https://github.com/slowptr/sh-unlagged" target="_blank" rel="noopener">sh-unlagged</a> mod
+        are the classic treatment of the <em>other</em> half of the fairness
         problem, lag compensation for hits, which this post deliberately leaves alone; van
-        Waveren's DOOM III paper [<a class="cite" href="#ref-vanwaveren-2006">14</a>] describes id's next architecture, which
+        Waveren's DOOM III paper [<a class="cite" href="#ref-vanwaveren-2006">10</a>] describes id's next architecture, which
         kept per-client PVS filtering and dropped snapshot interpolation in favour of a
-        different client model; and the netcodesimulator project [<a class="cite" href="#ref-netcodesim">32</a>] is a small
+        different client model; and the <a href="https://github.com/tariq10x/netcodesimulator" target="_blank" rel="noopener">netcodesimulator</a> project is a small
         sandbox for the same four-clocks reasoning that does not depend on any engine.
       </p>
     </div>
@@ -1691,8 +1798,8 @@
       </p>
       <p>
         Worse, the population is heterogeneous in exactly the direction that makes a single
-        setting bad. The cheat window is \(W = (H - D_A)^+\): it is <em>largest for the
-        cheater with the best link</em>. The lateness is \(L = (D_A + B - H)^+\): it is largest
+        setting bad. The cheat window is \(W = [H - D_A]_+\): it is <em>largest for the
+        cheater with the best link</em>. The lateness is \(L = [D_A + B - H]_+\): it is largest
         for the honest player with the worst link. One \(H\) for everyone is therefore at once
         too generous to the low-ping cheat and too stingy to the high-ping player, which is the
         observation behind the per-client horizon of box D10. Any evaluation that reports an
@@ -1701,13 +1808,13 @@
       <p>
         There is measurement work to build on. Tokey, Chen, Claypool and colleagues ran a
         controlled study of how much the peeker's advantage grows with latency
-        [<a class="cite" href="#ref-tokey-fdg24">29</a>]; Chen models who wins a peek under asymmetric latency
-        [<a class="cite" href="#ref-chen-peeker">30</a>]; Liu, Xu and Claypool's survey lays out the space of compensation
-        techniques whose effects one would be measuring [<a class="cite" href="#ref-liu-claypool-2022">33</a>]; Riot describe
+        [<a class="cite" href="#ref-tokey-fdg24">24</a>]; Chen models who wins a peek under asymmetric latency
+        [<a class="cite" href="#ref-chen-peeker">25</a>]; Liu, Xu and Claypool's survey lays out the space of compensation
+        techniques whose effects one would be measuring [<a class="cite" href="#ref-liu-claypool-2022">26</a>]; Riot describe
         sizing a client buffer from the measured jitter of their population rather than from a
-        rule of thumb [<a class="cite" href="#ref-riot-netcode">34</a>]; and two of Tariq10x's videos make, in a different
+        rule of thumb [<a class="cite" href="#ref-riot-netcode">27</a>]; and two of Tariq10x's videos make, in a different
         register, the same case that FPS timing arguments should be settled by simulation and
-        measurement rather than folklore [<a class="cite" href="#ref-tariq-subtick">35</a>, <a class="cite" href="#ref-tariq-prove">36</a>]. What I want from a
+        measurement rather than folklore [<a class="cite" href="#ref-tariq-subtick">28</a>, <a class="cite" href="#ref-tariq-prove">29</a>]. What I want from a
         model is narrower than any of those: for a setting \(k\) and a population of links and
         corners, the predicted distribution of \(W\) and \(L\), and how sure we are about it.
       </p>
@@ -1770,20 +1877,20 @@
           \rho_i &\sim \mathrm{Uniform}(-f_i,\,0],\\[2pt]
           \varphi_i &\sim \mathrm{ZOIB}\!\big(\pi^0_i,\ \pi^1_i,\ \pi_i \kappa,\ (1-\pi_i)\kappa\big), &
           \operatorname{logit}\pi_i &= \boldsymbol z_i^{\top}\boldsymbol\theta + u^{(m)}_{m[i]} + u^{(g)}_{g[i]},
-          \end{aligned}$$
-          <p>with \(D_{R,i} = D_{A,i} + B_i\), \(W_i = (H_i - D_{A,i})^+\) and \(L_i = (D_{R,i} - H_i)^+\). Here \(X_i\) indicates that the client was extrapolating when the target became current (section 6.4), so that \(B_i\) can carry the cap; \(\mathrm{ZOIB}\) is a zero-and-one-inflated Beta, needed because straight approaches give \(\varphi_i = 1\) exactly and curved ones \(\varphi_i = 0\) exactly, with the point masses \(\pi^0_i, \pi^1_i\) themselves logistic in \(\boldsymbol z_i\); and for a stationary target the speed gate forces \(\varphi_i \equiv 0\), which enters as an observed covariate rather than a parameter (fixture F4). The features \(\boldsymbol z_i\) are what the server can log at the moment of the check: target speed, closing speed, the present-trace and projected-trace verdicts, the approach angle to the corner, distance, lean state. The random walk \(m_t\) absorbs slow drift in network conditions during a session.</p>
+          \end{aligned} \tag{15} $$
+          <p>Read the five lines in words before the symbols. First line: the log of the delivery delay is Student-\(t\) around a level set by the viewer's link (half the round trip, the jitter), plus learned offsets for who the client is, which session it is, and a slowly drifting time block. Second: the same shape for the render delay, with the snapshot period and the extrapolation flag in place of the link. Third: box D4's decomposition \(H = k f \varphi + \rho\), with the frame residual \(\rho\) uniform over one frame. Fourth and fifth: the realised fraction \(\varphi\) may be exactly 0, exactly 1, or anything in between, with the probabilities of those outcomes driven by the geometry of the approach and by per-map and per-corner offsets. The outcomes then follow section 3.3 exactly: \(D_{R,i} = D_{A,i} + B_i\), \(W_i = [H_i - D_{A,i}]_+\) and \(L_i = [D_{R,i} - H_i]_+\). Here \(X_i\) indicates that the client was extrapolating when the target became current (section 6.4), so that \(B_i\) can carry the cap; \(\mathrm{ZOIB}\) is a zero-and-one-inflated Beta, needed because straight approaches give \(\varphi_i = 1\) exactly and curved ones \(\varphi_i = 0\) exactly, with the point masses \(\pi^0_i, \pi^1_i\) themselves logistic in \(\boldsymbol z_i\); and for a stationary target the speed gate forces \(\varphi_i \equiv 0\), which enters as an observed covariate rather than a parameter (fixture F4). The features \(\boldsymbol z_i\) are what the server can log at the moment of the check: target speed, closing speed, the present-trace and projected-trace verdicts, the approach angle to the corner, distance, lean state. The random walk \(m_t\) absorbs slow drift in network conditions during a session.</p>
           <p>The measurement part is what makes the model honest. Client timestamps live on a clock offset from the server's by an unknown \(o_{c[i]}\) that the engine estimates but does not know; the crossing time is reconstructed offline from logged eye positions with an error that depends on how fast the geometry was changing:</p>
-          $$\widetilde A_i = A_i + o_{c[i]} + \epsilon_{A,i},\qquad \widetilde R_i = R_i + o_{c[i]} + \epsilon_{R,i},\qquad \widetilde V_i \sim \mathcal N\!\big(V_i,\ s_{V,i}^2\big),\qquad o_{c} \sim \mathcal N(\hat o_c,\ \tau_o^2),$$
+          $$\widetilde A_i = A_i + o_{c[i]} + \epsilon_{A,i},\qquad \widetilde R_i = R_i + o_{c[i]} + \epsilon_{R,i},\qquad \widetilde V_i \sim \mathcal N\!\big(V_i,\ s_{V,i}^2\big),\qquad o_{c} \sim \mathcal N(\hat o_c,\ \tau_o^2), \tag{16} $$
           <p>where \(\hat o_c\) comes from the netchan's own round-trip estimate and \(\tau_o\) is its believed precision. A crossing in which the target was never drawn within the window \(T^{\max}_i\) contributes the survival term \(P(R_i &gt; T^{\max}_i)\) instead of a density; dropping those events would select on the outcome and bias every delay downwards. For the same reason the server must log every visibility <em>candidate</em>, not only the inclusions: the filter under study is the one doing the selecting.</p>
           <p>Priors, in units a server operator can argue with; they are examples to be checked by prior-predictive simulation, not recommendations:</p>
           $$\begin{aligned}
           \alpha_A &\sim \mathcal N(\log 60\ \mathrm{ms},\,0.6), & \alpha_B &\sim \mathcal N(\log 55\ \mathrm{ms},\,0.5), & \beta_{\bullet} &\sim \mathcal N(0,\,0.5),\\
           \sigma_A, \sigma_B &\sim \mathrm{HalfNormal}(0.5), & \nu_\bullet &= 2 + \mathrm{Exponential}(1/10), & \boldsymbol\theta &\sim \mathcal N(0,\,1),\\
           \kappa &\sim \mathrm{Gamma}(2,\,0.1), & \tau_u &\sim \mathrm{HalfNormal}(0.5), & \tau_o &\sim \mathrm{HalfNormal}(10\ \mathrm{ms}).
-          \end{aligned}$$
+          \end{aligned} \tag{17} $$
           <p>The \(\alpha_A\) prior says a median delivery delay of 60 ms with a 95% range of roughly 18 to 200 ms before seeing data; \(\alpha_B\) centres the render delay on the steady state of section 6.1 at 20 Hz. The Student-\(t\) tails let a link spike without dragging \(\sigma\) with it. Partial pooling lets a corner seen twenty times inform one seen twice. A prior-predictive check draws whole matches from these priors alone and asks whether they produce ten-second delays, negative leads, or a lateness that never happens; if they do, the model is fixed before the data are consulted.</p>
           <figure class="code-card" data-kind="pseudo">
-            <figcaption class="code-head"><span class="code-kind pseudo">sketch · not run here</span><span class="code-fn">PyMC</span><span class="code-title">The skeleton of the model above, in the notation of PyMC [<a class="cite" href="#ref-pymc">37</a>]. It omits the measurement layer, the censoring term and the inflated Beta, which are the parts that take the most care.</span></figcaption>
+            <figcaption class="code-head"><span class="code-kind pseudo">sketch</span><span class="code-fn">PyMC</span><span class="code-title">The skeleton of the model above, in the notation of <a href="https://www.pymc.io/" target="_blank" rel="noopener">PyMC</a>. It omits the measurement layer, the censoring term and the inflated Beta, which are the parts that take the most care. A completed version of exactly this skeleton is run below.</span></figcaption>
             <pre class="codeblk pseudo" tabindex="0" aria-label="PyMC sketch of the hierarchical model"><code>with pm.Model(coords=coords) as corner_model:
     # partial pooling over clients, sessions, maps and corners (non-centred)
     u_client = pm.Normal("u_client_raw", 0, 1, dims="client") * pm.HalfNormal("tau_client", 0.5)
@@ -1814,7 +1921,43 @@
     W   = pm.Deterministic("W", pt.maximum(H - pm.math.exp(log_DA), 0))
     L   = pm.Deterministic("L", pt.maximum(pm.math.exp(log_DA) + B - H, 0))</code></pre>
           </figure>
-          <p>Two remarks on the shape. First, \(k\) enters only through \(H\), and only multiplied by \(\varphi\): in a population with many curved approaches and stationary targets, the model will correctly say that \(k\) barely matters, which is a finding, not a failure. Second, the code fixes \(k = 3\) as an integer; the model treats it as a knob so that the decision analysis of section 9.3 can compare settings, but the settings actually available are integers, or a per-client rule as in box D10. General references for this style of model are Gelman et al. [<a class="cite" href="#ref-gelman-bda3">18</a>] and McElreath [<a class="cite" href="#ref-mcelreath">19</a>].</p>
+          <p>
+            The sketch does run. I completed its elided parts in the most literal way (the
+            render-delay block mirrors the delivery block; \(\varphi\) stays a plain Beta),
+            simulated 600 crossings from known parameter values across twelve clients and eight
+            corners, and sampled: four chains of 1000 draws, about ten seconds on a laptop,
+            PyMC 6.3. Nothing PyMC-like runs inside a web page, so the numbers below are pasted
+            from that local run, not computed live. No divergences, every split-\(\hat R\) at
+            1.00, and every generating value inside its 94% posterior interval:
+          </p>
+          <pre class="codeblk" tabindex="0" aria-label="Posterior summary of the completed sketch fitted to 600 synthetic crossings"><code>parameter                   truth  post mean        94% interval  r_hat
+alpha_A                      4.01       4.08  [   3.94,    4.22]   1.00
+beta_A[log_rtt_half]         0.90       0.91  [   0.85,    0.97]   1.00
+beta_A[log1p_jitter]         0.30       0.31  [   0.27,    0.36]   1.00
+sigma_A                      0.30       0.30  [   0.27,    0.32]   1.00
+nu_A_minus_2                 4.00       3.03  [   1.88,    4.58]   1.00
+tau_client                   0.20       0.26  [   0.17,    0.40]   1.00
+alpha_B                      4.06       4.06  [   4.04,    4.08]   1.00
+sigma_B                      0.22       0.22  [   0.21,    0.24]   1.00
+theta[closing_speed]         1.10       1.04  [   0.97,    1.10]   1.00
+theta[approach_angle]       -0.70      -0.68  [  -0.74,   -0.62]   1.00
+kappa                        8.00       7.92  [   7.14,    8.76]   1.00
+tau_corner                   0.35       0.28  [   0.16,    0.49]   1.00
+
+derived, at k = 3 and f = 50 ms, over the same 600 synthetic crossings:
+posterior mean E[W] = 14.1 ms    P(W &gt; 0) = 0.54
+posterior mean E[L] = 91.4 ms    P(L &gt; 0) = 0.98</code></pre>
+          <p class="src-note">
+            A synthetic-data check, nothing more: the "truth" column is what the fake telemetry
+            was generated from, so the table shows that the model recovers what it should when
+            the world matches it, which is a sanity check and not evidence about any real server.
+            Two honest wrinkles. The tail exponent \(\nu\) is the least pinned-down parameter at
+            600 events, and section 9.1 said the decision lives in the tails, so that is exactly
+            the parameter more telemetry has to firm up. And with this simulated geometry mix
+            (mean \(\varphi\) near one half) lateness dominates at \(k = 3\): box D7's flat-loss
+            regime, showing up in numbers.
+          </p>
+          <p>Two remarks on the shape. First, \(k\) enters only through \(H\), and only multiplied by \(\varphi\): in a population with many curved approaches and stationary targets, the model will correctly say that \(k\) barely matters, which is a finding, not a failure. Second, the code fixes \(k = 3\) as an integer; the model treats it as a knob so that the decision analysis of section 9.3 can compare settings, but the settings actually available are integers, or a per-client rule as in box D10. General references for this style of model are Gelman et al. [<a class="cite" href="#ref-gelman-bda3">14</a>] and McElreath [<a class="cite" href="#ref-mcelreath">15</a>].</p>
         </div>
       </details>
 
@@ -1822,11 +1965,11 @@
         <summary><span class="lvl">Level 3</span>An information view: why a cheat wants time rather than bits, and what the sounds leak</summary>
         <div>
           <p class="dq">Question: how much does an early disclosure tell a cheat about the corner, how does that change with the lead \(W\), and how much do the non-PVS sounds of section 5.8 disclose about a player the server is otherwise withholding?</p>
-          <p>Let \(X_{V-W}\) be the target's disclosed state (origin and velocity) at lead \(W\) before the crossing, and let the cheat's object of interest be the crossing time \(V\). The information the disclosure carries about \(V\) is the mutual information \(I(V; X_{V-W}) = h(V) - h(V \mid X_{V-W})\). Before disclosure the cheat's uncertainty about \(V\) is whatever the prior over corners gives, say a spread \(\sigma_V\) of a second or more. After disclosure at lead \(W\) the remaining uncertainty is the target's freedom to change course in the next \(W\) milliseconds, which grows with \(W\); under a local Gaussian approximation with residual spread \(s(W) = s_0 + c\,W\),</p>
-          $$I(W) \approx \tfrac12 \log_2 \frac{\sigma_V^2}{(s_0 + c W)^2},$$
+          <p>Let \(X_{V-W}\) be the target's disclosed state (origin and velocity) at lead \(W\) before the crossing, and let the cheat's object of interest be the crossing time \(V\). The information the disclosure carries about \(V\) is the mutual information \(I(V; X_{V-W}) = h(V) - h(V \mid X_{V-W})\): in plain terms, by how many bits the disclosure shrinks the cheat's uncertainty about <em>when</em> the peek will come. Before disclosure the cheat's uncertainty about \(V\) is whatever the prior over corners gives, say a spread \(\sigma_V\) of a second or more. After disclosure at lead \(W\) the remaining uncertainty is the target's freedom to change course in the next \(W\) milliseconds, which grows with \(W\); under a local Gaussian approximation with residual spread \(s(W) = s_0 + c\,W\),</p>
+          $$I(W) \approx \tfrac12 \log_2 \frac{\sigma_V^2}{(s_0 + c W)^2}, \tag{18} $$
           <p>which is <em>decreasing</em> in \(W\). The earlier the server discloses, the fewer bits the disclosure carries about when the peek will happen, because the peeker has not decided yet. Meanwhile the cheat's usable lead is \(W\) itself: time to pre-aim, to reposition, to decide not to peek. So information content and tactical value move in opposite directions in \(W\). This is why the loss in box D2 and section 9.3 is written in milliseconds of \(W\) and not in bits: a cheat does not want to know more, it wants to know sooner. It also explains why the server's projection is well targeted: it discloses at the last moment at which disclosure is nearly certain to be needed, which is where \(I\) is highest and \(W\) smallest.</p>
           <p>The sound channel is different. Each non-PVS sound in <a href="#card-nonpvs" class="lref">Listing 7</a> carries the withheld player's exact origin at the time of the sound (fixture F10). If the cheat's prior over that player's position is uniform over a region of area \(\mathcal A\) at a resolution of \(r \times r\) units, one sound is worth up to</p>
-          $$I_{\text{sound}} \le \log_2 \frac{\mathcal A}{r^2},$$
+          $$I_{\text{sound}} \le \log_2 \frac{\mathcal A}{r^2}, \tag{19} $$
           <p>which for a 2000-by-2000 unit region at 16-unit resolution is about 14 bits, delivered at footstep rate. A few footsteps a second are enough to track the player continuously through the wall, which is what a sound-driven overlay would do. A legitimate client receives the same origins but perceives them through spatialised audio at a far lower resolution, a few tens of degrees of azimuth and a rough sense of distance, and the difference between those two resolutions is exactly the channel's value to a cheat. The bound is an upper bound; how much of it is realised on a real server depends on how often withheld players make sounds, which is the count the F10 telemetry hook records. My reading is that the designers accepted this channel knowingly (the documentation advertises footsteps for culled players), and the right response is to measure its rate rather than to remove it, since footsteps through walls are part of the game.</p>
         </div>
       </details>
@@ -1838,13 +1981,13 @@
         \(\theta^{(1)}, \ldots, \theta^{(S)}\). For each draw and each candidate horizon
         \(h = k f\), simulate future corners and record
       </p>
-      $$W^{(s)}(h) = \big(H^{(s)}(h) - D_A^{(s)}\big)^+,\qquad L^{(s)}(h) = \big(D_A^{(s)} + B^{(s)} - H^{(s)}(h)\big)^+ .$$
+      $$W^{(s)}(h) = \big[H^{(s)}(h) - D_A^{(s)}\big]_+,\qquad L^{(s)}(h) = \big[D_A^{(s)} + B^{(s)} - H^{(s)}(h)\big]_+ . \tag{20} $$
       <p>
         Then score each setting with a loss that says how much a millisecond of cheat window
         costs relative to a millisecond of lateness, and, because a rare 250 ms invisible attacker
         matters more than many harmless 2 ms misses, adds terms for the tails:
       </p>
-      $$\mathcal J(h) = c_W\,\mathbb E[W \mid h] + c_L\,\mathbb E[L \mid h] + c_{WT}\,P(W &gt; w_0 \mid h) + c_{LT}\,P(L &gt; \ell_0 \mid h).$$
+      $$\mathcal J(h) = c_W\,\mathbb E[W \mid h] + c_L\,\mathbb E[L \mid h] + c_{WT}\,P(W &gt; w_0 \mid h) + c_{LT}\,P(L &gt; \ell_0 \mid h). \tag{21} $$
       <p>
         The setting to choose minimises the loss averaged over the posterior. The spread of the
         per-draw minimisers says how much the choice depends on what is still unknown. Figure 5
@@ -1883,15 +2026,15 @@
       </div>
 
       <details class="deep" id="D7">
-        <summary><span class="lvl">Level 3</span>The decision loss: how the newsvendor optimum and the posterior combine, and what Figure 6 is not</summary>
+        <summary><span class="lvl">Level 3</span>The decision loss: how the balance condition and the posterior combine, and what Figure 6 is not</summary>
         <div>
           <p class="dq">Question: how do the per-corner losses of box D2 and the posterior draws combine into a single choice of \(k\), and what does the histogram of per-draw minimisers in Figure 6 actually measure?</p>
           <p>Write \(\mathcal J(h;\theta)\) for the loss of the previous paragraph evaluated under parameters \(\theta\), which fixes the distributions of \(D_A\), \(B\) and \(\varphi\). The Bayes decision minimises the posterior expected loss,</p>
-          $$\bar{\mathcal J}(h) = \int \mathcal J(h;\theta)\, p(\theta \mid \mathcal D)\, d\theta \;\approx\; \frac1S \sum_{s=1}^{S} \mathcal J\big(h;\theta^{(s)}\big),\qquad h^\star = \arg\min_h \bar{\mathcal J}(h).$$
-          <p>Without the tail terms, \(\mathcal J(h;\theta)\) is convex in \(h\) for every \(\theta\): it is a positive combination of expectations of the convex functions \((h - D_A)^+\) and \((D_R - h)^+\), which is the newsvendor structure of box D2. An average of convex functions is convex, so \(\bar{\mathcal J}\) is convex and \(h^\star\) is unique whenever \(c_W, c_L &gt; 0\); with the tail terms \(c_{WT}P(W &gt; w_0)\) and \(c_{LT}P(L &gt; \ell_0)\) convexity can fail and a grid search over the handful of integer \(k\) actually available is the honest method. The first-order condition without tails is the weighted quantile of box D2 applied to the posterior-predictive mixture: \(h^\star\) is the point at which the posterior-predictive probability that a random corner's \(D_A\) falls below \(h\), weighted by \(c_W\), balances the probability that its \(D_R\) exceeds \(h\), weighted by \(c_L\).</p>
+          $$\bar{\mathcal J}(h) = \int \mathcal J(h;\theta)\, p(\theta \mid \mathcal D)\, d\theta \;\approx\; \frac1S \sum_{s=1}^{S} \mathcal J\big(h;\theta^{(s)}\big),\qquad h^\star = \arg\min_h \bar{\mathcal J}(h). \tag{22} $$
+          <p>Without the tail terms, \(\bar{\mathcal J}\) has the same U shape as the loss of box D2: averaging over draws mixes the delay distributions but keeps the shape, so there is a single best lead, and it is characterised by the same balance as before, now over the mixture. \(h^\star\) is the point at which the posterior-predictive probability that a random corner's \(D_A\) falls below \(h\), weighted by \(c_W\), balances the probability that its \(D_R\) exceeds \(h\), weighted by \(c_L\). With the tail terms \(c_{WT}P(W &gt; w_0)\) and \(c_{LT}P(L &gt; \ell_0)\) the U shape is no longer guaranteed, and a grid search over the handful of integer \(k\) actually available is the honest method.</p>
           <p>Figure 6 plots a different object: the per-draw minimisers \(h^{(s)} = \arg\min_h \mathcal J(h;\theta^{(s)})\). This is not a posterior distribution of \(h\), because \(h\) is a decision and not a parameter, and in general \(h^\star\) is neither the mean nor the median of the \(h^{(s)}\). The histogram answers a diagnostic question: if we knew \(\theta\), how much would the best setting move as \(\theta\) ranges over what the data still allow? A wide histogram with a sharp \(\bar{\mathcal J}\) minimum can happen (the draws disagree but the average does not), and so can a narrow histogram with a flat \(\bar{\mathcal J}\), when every draw agrees that nothing much depends on \(h\).</p>
-          <p>That second case is worth naming. Only \(H\) depends on \(h\), and only through \(\varphi\):</p>
-          $$\frac{\partial\,\mathbb E[W]}{\partial h} = \mathbb E\big[\varphi\,\mathbf 1\{H &gt; D_A\}\big],\qquad \frac{\partial\,\mathbb E[L]}{\partial h} = -\,\mathbb E\big[\varphi\,\mathbf 1\{H &lt; D_R\}\big].$$
+          <p>That second case is worth naming. Only \(H\) depends on \(h\), and only through \(\varphi\); writing \(\mathbf 1\{\cdot\}\) for the indicator, 1 when the event inside holds and 0 otherwise,</p>
+          $$\frac{\partial\,\mathbb E[W]}{\partial h} = \mathbb E\big[\varphi\,\mathbf 1\{H &gt; D_A\}\big],\qquad \frac{\partial\,\mathbb E[L]}{\partial h} = -\,\mathbb E\big[\varphi\,\mathbf 1\{H &lt; D_R\}\big]. \tag{23} $$
           <p>In a population where most approaches are curved or most targets stationary, \(\mathbb E[\varphi]\) is small, both derivatives are small, and the loss is flat in \(h\): the setting does not matter much, and no amount of data will make the histogram narrow. A flat loss is indifference, not ignorance. The same identity is why a per-client horizon (box D10) is a different decision problem with a different optimum: it changes the coupling between \(h\) and \(D_A\) that these derivatives assume away.</p>
         </div>
       </details>
@@ -2005,7 +2148,7 @@
         <b>Calibration and out-of-sample evaluation.</b> Hold out whole clients, sessions and
         maps, not random events: random splits leak repeated corner and client information and
         flatter the model. Use leave-one-group-out or its Pareto-smoothed importance-sampling
-        approximation [<a class="cite" href="#ref-vehtari-loo">38</a>], report interval coverage, and score predictions with a
+        approximation [<a class="cite" href="#ref-vehtari-loo">30</a>], report interval coverage, and score predictions with a
         proper scoring rule. For the simulation studies that precede any real data, use
         simulation-based calibration.
       </p>
@@ -2045,28 +2188,28 @@
       <h3>Cheating taxonomies</h3>
       <p>
         A wallhack is a consequence of giving an untrusted client state it is not entitled to use.
-        Yan and Randell's classification of cheating in online games [<a class="cite" href="#ref-yan-randell-2005">4</a>] puts
+        Yan and Randell's classification of cheating in online games [<a class="cite" href="#ref-yan-randell-2005">1</a>] puts
         it under cheating by exploiting a lack of secrecy: the protocol delivers information the
         rules of the game say the player should not have, and the client software is the only
         thing standing between the player and that information. Laurens, Paige, Brooke and
-        Chivers [<a class="cite" href="#ref-laurens-2007">15</a>] take the same view from the server's side and treat the
+        Chivers [<a class="cite" href="#ref-laurens-2007">11</a>] take the same view from the server's side and treat the
         problem as one of detecting the behavioural consequences of information a player should
-        not have. Demenais' history of anti-cheat [<a class="cite" href="#ref-epita-anticheat">5</a>] traces the industry's
+        not have. Demenais' history of anti-cheat [<a class="cite" href="#ref-epita-anticheat">2</a>] traces the industry's
         response from server-side code to kernel-level drivers, which is the trajectory you get
         when the state cannot be withheld and the client must instead be watched; Riot's account
-        of their own approach [<a class="cite" href="#ref-riot-anticheat">20</a>] is a first-party version of the same story.
+        of their own approach [<a class="cite" href="#ref-riot-anticheat">16</a>] is a first-party version of the same story.
         The framing of this post follows from the taxonomy: if the cheat is misplaced trust, the
         first question is how much to trust, and by how many milliseconds.
       </p>
 
       <h3>State exposure and preload depth</h3>
       <p>
-        Park, Ahmad and Lee's BlackMirror [<a class="cite" href="#ref-blackmirror">6</a>] is the most careful public statement
+        Park, Ahmad and Lee's BlackMirror [<a class="cite" href="#ref-blackmirror">3</a>] is the most careful public statement
         I know of the tension this post is about. They measure how much game state a client holds
         beyond what it is currently rendering, name the depth of that preloading as the resource a
         wallhack consumes, and observe that reducing it costs responsiveness; their solution is
         not to withhold state but to move the decision about what may be rendered into a trusted
-        enclave. The same tension appears in Demenais' history [<a class="cite" href="#ref-epita-anticheat">5</a>] as the reason
+        enclave. The same tension appears in Demenais' history [<a class="cite" href="#ref-epita-anticheat">2</a>] as the reason
         server-side approaches gave way to client-side ones. Section 3 of this post is an attempt
         to write the preload-depth tradeoff in time units rather than bytes, which is the unit in
         which both the cheat and the honest player experience it.
@@ -2075,18 +2218,18 @@
       <h3>Server-side visibility filtering</h3>
       <p>
         The idea of not sending what cannot be seen is older than any of the implementations here:
-        the potentially visible set [<a class="cite" href="#ref-wiki-pvs">27</a>] is a rendering optimisation that Quake-family
+        the potentially visible set [<a class="cite" href="#ref-wiki-pvs">22</a>] is a rendering optimisation that Quake-family
         servers reuse as a disclosure policy for free. The refinement that matters for wallhacks is
         a per-player line-of-sight test on top of the PVS. Medal of Honor: Breakthrough 2.30
         shipped one, and OpenMoHAA reimplements and documents it as its anti-chams optimisation
-        [<a class="cite" href="#ref-opm-docs-config">7</a>, <a class="cite" href="#ref-opm-docs-diff">28</a>]; sections 5.3 to 5.9 are my reading of that code.
+        [<a class="cite" href="#ref-opm-docs-config">4</a>, <a class="cite" href="#ref-opm-docs-diff">23</a>]; sections 5.3 to 5.9 are my reading of that code.
         Counter-Strike: Global Offensive had a comparable server-side player occlusion feature,
-        which I know only through third-party descriptions [<a class="cite" href="#ref-csgo-occlude">9</a>]. The CornerCulling
-        projects [<a class="cite" href="#ref-cornerculling">8</a>] implement the same idea for the Source engine and for Unreal
+        which I know only through third-party descriptions [<a class="cite" href="#ref-csgo-occlude">5</a>]. The <a href="https://github.com/87andrewh/CornerCulling" target="_blank" rel="noopener">CornerCulling</a>
+        projects implement the same idea for <a href="https://github.com/87andrewh/CornerCullingSourceEngine" target="_blank" rel="noopener">the Source engine</a> and for Unreal
         with a stronger geometric test: they check whether <em>any</em> position the target could
         reach within a latency budget would be visible, using bounding volumes around the possible
         futures, where OpenMoHAA traces to one projected point. Riot's Fog of War for Valorant
-        [<a class="cite" href="#ref-riot-fog">10</a>] is the best-known production system of this kind and is explicit about the
+        [<a class="cite" href="#ref-riot-fog">6</a>] is the best-known production system of this kind and is explicit about the
         two design choices this post keeps returning to: a look-ahead that is deliberately larger
         than the expected ping so that honest clients are not late, and a large investment in
         making the server-side test cheap enough to run for every pair of players every tick.
@@ -2097,44 +2240,44 @@
       <h3>Snapshot interpolation and prediction</h3>
       <p>
         The client half of the corner is the subject of a large practitioner literature. Bernier's
-        GDC paper [<a class="cite" href="#ref-bernier-2001">11</a>] and the Valve wiki's description of Source networking
-        [<a class="cite" href="#ref-valve-wiki">12</a>], together with the GoldSrc lineage that preceded them [<a class="cite" href="#ref-goldsrc">39</a>],
+        GDC paper [<a class="cite" href="#ref-bernier-2001">7</a>] and the Valve wiki's description of Source networking
+        [<a class="cite" href="#ref-valve-wiki">8</a>], together with the GoldSrc lineage that preceded them [<a class="cite" href="#ref-goldsrc">31</a>],
         set out the standard vocabulary of client prediction, entity interpolation with a fixed
         delay, and server-side lag compensation. Gambetta's four articles and live demo
-        [<a class="cite" href="#ref-gambetta">13</a>] are the clearest short introduction I know. Van Waveren's account of the
-        DOOM III architecture [<a class="cite" href="#ref-vanwaveren-2006">14</a>] is the interesting contrast: it kept
+        [<a class="cite" href="#ref-gambetta">9</a>] are the clearest short introduction I know. Van Waveren's account of the
+        DOOM III architecture [<a class="cite" href="#ref-vanwaveren-2006">10</a>] is the interesting contrast: it kept
         PVS-filtered per-client snapshots but replaced remote interpolation with client-side
         simulation of every entity, corrected by snapshots, which changes what a late first
         snapshot means for the player being revealed. For the Quake III skeleton that OpenMoHAA
-        inherits, Sanglard's review [<a class="cite" href="#ref-sanglard-q3">21</a>], jfedor's protocol notes [<a class="cite" href="#ref-jfedor">22</a>], the
-        Unlagged networking primer [<a class="cite" href="#ref-unlagged">24</a>] and the Swinburne game-structures report
-        [<a class="cite" href="#ref-swinburne-q3">23</a>] between them cover snapshots, delta compression, the client clock and
+        inherits, Sanglard's review [<a class="cite" href="#ref-sanglard-q3">17</a>], jfedor's protocol notes [<a class="cite" href="#ref-jfedor">18</a>], the
+        Unlagged networking primer [<a class="cite" href="#ref-unlagged">20</a>] and the Swinburne game-structures report
+        [<a class="cite" href="#ref-swinburne-q3">19</a>] between them cover snapshots, delta compression, the client clock and
         the interpolation rule; section 6 of this post is those documents applied to the one
         situation they do not discuss, an entity that appears for the first time.
       </p>
       <p>
-        On the peeker's advantage specifically, Riot's netcode article [<a class="cite" href="#ref-riot-netcode">34</a>]
+        On the peeker's advantage specifically, Riot's netcode article [<a class="cite" href="#ref-riot-netcode">27</a>]
         explains how they sized interpolation and buffering from measured population jitter;
-        Tokey, Chen, Claypool and colleagues [<a class="cite" href="#ref-tokey-fdg24">29</a>] measured the advantage under
-        controlled added latency; Chen [<a class="cite" href="#ref-chen-peeker">30</a>] works out who wins a peek when the two
+        Tokey, Chen, Claypool and colleagues [<a class="cite" href="#ref-tokey-fdg24">24</a>] measured the advantage under
+        controlled added latency; Chen [<a class="cite" href="#ref-chen-peeker">25</a>] works out who wins a peek when the two
         players have different latencies; and Liu, Xu and Claypool's survey
-        [<a class="cite" href="#ref-liu-claypool-2022">33</a>] organises the compensation techniques whose side effects those
+        [<a class="cite" href="#ref-liu-claypool-2022">26</a>] organises the compensation techniques whose side effects those
         measurements observe. Tariq10x's videos, cited here by title and channel, argue in an
-        accessible register that client prediction changed online games [<a class="cite" href="#ref-tariq-feature">25</a>],
-        that Quake III's netcode is worth teaching [<a class="cite" href="#ref-tariq-q3">40</a>], that sub-tick timing does not
-        solve what people think it solves [<a class="cite" href="#ref-tariq-subtick">35</a>], and that these questions should be
-        settled by simulation rather than folklore [<a class="cite" href="#ref-tariq-prove">36</a>]; the accompanying simulator
-        [<a class="cite" href="#ref-netcodesim">32</a>] is a local sandbox for exactly the artefacts section 6 describes. Two
-        MOHAA-specific artefacts belong here as well: sh-unlagged [<a class="cite" href="#ref-sh-unlagged">31</a>], a wrapper
+        accessible register that client prediction changed online games [<a class="cite" href="#ref-tariq-feature">21</a>],
+        that Quake III's netcode is worth teaching [<a class="cite" href="#ref-tariq-q3">32</a>], that sub-tick timing does not
+        solve what people think it solves [<a class="cite" href="#ref-tariq-subtick">28</a>], and that these questions should be
+        settled by simulation rather than folklore [<a class="cite" href="#ref-tariq-prove">29</a>]; the accompanying
+        <a href="https://github.com/tariq10x/netcodesimulator" target="_blank" rel="noopener">simulator</a> is a local sandbox for exactly the artefacts section 6 describes. Two
+        MOHAA-specific artefacts belong here as well: <a href="https://github.com/slowptr/sh-unlagged" target="_blank" rel="noopener">sh-unlagged</a>, a wrapper
         around Spearhead's game module that reconstructs and reworks its netcode from the outside,
-        and my own interactive demo of the MOHAA snapshot pipeline [<a class="cite" href="#ref-fecmtc-demo">26</a>], which
+        and my own <a href="https://fecmtc.github.io/mohaa-netcode-demo/" target="_blank" rel="noopener">interactive demo</a> of the MOHAA snapshot pipeline, which
         section 3 leans on for intuition.
       </p>
 
       <h3>Probabilistic checking</h3>
       <p>
         If the server cannot withhold everything, it can ask how likely a player's behaviour is
-        without the withheld information. Laurens and colleagues [<a class="cite" href="#ref-laurens-2007">15</a>] do this for
+        without the withheld information. Laurens and colleagues [<a class="cite" href="#ref-laurens-2007">11</a>] do this for
         wallhacks directly: they estimate, from the server's own geometry, how often a player aims
         at opponents who are occluded, and flag those for whom that rate is implausible without
         cheating. The relation to this post is complementary. Their detector is a likelihood ratio
@@ -2147,10 +2290,10 @@
       <h3>Cryptographic hidden state</h3>
       <p>
         The strongest form of not trusting the client is to make the hidden state cryptographically
-        inaccessible rather than merely unsent. Dark Forest [<a class="cite" href="#ref-darkforest">16</a>] did this for a
+        inaccessible rather than merely unsent. Dark Forest [<a class="cite" href="#ref-darkforest">12</a>] did this for a
         turn-based strategy game with zero-knowledge proofs: players prove that their moves are
         legal without revealing where they are. Ingonyama's discussion of a cryptographic fog of
-        war [<a class="cite" href="#ref-ingonyama-fog">17</a>] surveys what it would take to extend the idea. For a shooter at 20
+        war [<a class="cite" href="#ref-ingonyama-fog">13</a>] surveys what it would take to extend the idea. For a shooter at 20
         server frames per second, with a visibility predicate that depends on a BSP trace between
         two moving eyes, the cost is far outside what a proof system can do today, and the
         essential difficulty of this post survives even in principle: whatever is proven, the
@@ -2160,7 +2303,7 @@
 
       <h3>Trusted client execution</h3>
       <p>
-        BlackMirror [<a class="cite" href="#ref-blackmirror">6</a>] is also the reference point for the middle road between
+        BlackMirror [<a class="cite" href="#ref-blackmirror">3</a>] is also the reference point for the middle road between
         withholding state and trusting the client: run the visibility decision inside a hardware
         enclave on the client, so that the untrusted renderer only ever receives what an honest
         renderer would draw. The paper reports the overhead of doing this for a real game and is
@@ -2174,11 +2317,11 @@
       <h3>Bayesian modelling under imperfect measurement</h3>
       <p>
         The statistical stance of sections 9 and 10 is standard and I claim nothing new in it.
-        Gelman and colleagues [<a class="cite" href="#ref-gelman-bda3">18</a>] and McElreath [<a class="cite" href="#ref-mcelreath">19</a>] are the references
+        Gelman and colleagues [<a class="cite" href="#ref-gelman-bda3">14</a>] and McElreath [<a class="cite" href="#ref-mcelreath">15</a>] are the references
         for hierarchical models with measurement error and censoring, for prior and posterior
         predictive checking, and for the discipline of treating a logged quantity as a noisy
-        observation of a latent one; Vehtari, Gelman and Gabry [<a class="cite" href="#ref-vehtari-loo">38</a>] for the
-        cross-validation used in section 10.3; and PyMC [<a class="cite" href="#ref-pymc">37</a>] for the notation of the sketch
+        observation of a latent one; Vehtari, Gelman and Gabry [<a class="cite" href="#ref-vehtari-loo">30</a>] for the
+        cross-validation used in section 10.3; and <a href="https://www.pymc.io/" target="_blank" rel="noopener">PyMC</a> for the notation of the sketch
         in box D6. What is specific to the corner is only the structure: a lead that is quantised
         to frames and scaled by geometry, two delays on different clocks, and a decision whose
         loss is asymmetric in a way the operator has to state.
@@ -2208,8 +2351,8 @@
         cutoff for how early a server should disclose a player, because the same setting is both
         too generous to the cheater with the best link and too stingy for the honest player with
         the worst one. But there is a universal structure. The disclosure lead \(H\), the delivery
-        delay \(D_A\) and the render delay \(B\) fix the cheat's window \(W = (H - D_A)^+\) and the
-        honest client's lateness \(L = (D_A + B - H)^+\); pushing \(H\) up buys less lateness with
+        delay \(D_A\) and the render delay \(B\) fix the cheat's window \(W = [H - D_A]_+\) and the
+        honest client's lateness \(L = [D_A + B - H]_+\); pushing \(H\) up buys less lateness with
         more early information, pushing it down buys the reverse, and inside the band where both
         are nonzero their sum is exactly \(B\). Everything else is a question about the
         distributions of those three quantities on a real population, and those are things to
@@ -2271,7 +2414,38 @@
     <h2>References</h2>
     <p class="src-note">In order of first appearance. Links checked as of September 2026. Source excerpts are pinned to openmohaa revision 667c50f9 (2026-04-13) and ioquake3 revision 58839361 (2026-07-19); the repositories' <code>main</code> branches have moved since and will keep moving.</p>
     <ol class="ref-list">
-<li id="ref-openmohaa-repo">OpenMoHAA contributors. <a href="https://github.com/openmoh/openmohaa" target="_blank" rel="noopener">openmoh/openmohaa</a>. Every OpenMoHAA excerpt in this post is pinned to revision <a href="https://github.com/openmoh/openmohaa/tree/667c50f9b24cf1d4ead8429412b6ca7fa29e3b8f" target="_blank" rel="noopener">667c50f9</a> (2026-04-13).</li><li id="ref-ioq3-repo">ioquake3 contributors. <a href="https://github.com/ioquake/ioq3" target="_blank" rel="noopener">ioquake/ioq3</a>. Every ioquake3 excerpt is pinned to revision <a href="https://github.com/ioquake/ioq3/tree/588393618dbc82e7207c21c6ddecca229944a03a" target="_blank" rel="noopener">58839361</a> (2026-07-19).</li><li id="ref-q3-source">id Software. <a href="https://github.com/id-Software/Quake-III-Arena" target="_blank" rel="noopener">Quake III Arena source code</a>. GPL release, 2005.</li><li id="ref-yan-randell-2005">Jeff Yan, Brian Randell. <a href="https://doi.org/10.1145/1103599.1103606" target="_blank" rel="noopener">A Systematic Classification of Cheating in Online Games</a>. NetGames 2005.</li><li id="ref-epita-anticheat">Lucas Demenais. <a href="https://blog.gistre.epita.fr/posts/lucas.demenais-2025-06-24-history_of_anticheat/" target="_blank" rel="noopener">A History of Anti-Cheat Techniques in Video Games, from Server-Side Code to Kernel Level</a>. The Gistre Blog (EPITA), 2025.</li><li id="ref-blackmirror">Seonghyun Park, Adil Ahmad, Byoungyoung Lee. <a href="https://doi.org/10.1145/3372297.3417890" target="_blank" rel="noopener">BlackMirror: Preventing Wallhacks in 3D Online FPS Games</a>. ACM CCS 2020.</li><li id="ref-opm-docs-config">OpenMoHAA documentation. <a href="https://github.com/openmoh/openmohaa/blob/667c50f9b24cf1d4ead8429412b6ca7fa29e3b8f/docs/markdown/03-configuration/01-configuration.md" target="_blank" rel="noopener">Configuration</a> (section “Optimization / Antichams”), <code>docs/markdown/03-configuration/01-configuration.md</code> at 667c50f9; also published at <a href="https://docs.openmohaa.org/" target="_blank" rel="noopener">docs.openmohaa.org</a>.</li><li id="ref-cornerculling">87andrewh. <a href="https://github.com/87andrewh/CornerCulling" target="_blank" rel="noopener">CornerCulling: Fast and Maximally Accurate Occlusion Culling</a>; <a href="https://github.com/87andrewh/CornerCullingSourceEngine" target="_blank" rel="noopener">CornerCullingSourceEngine</a>. GitHub.</li><li id="ref-csgo-occlude">Counter-Strike: Global Offensive server-side player occlusion (<code>sv_occlude_players</code>), as described by third parties such as the CornerCullingSourceEngine README above. I could not locate a first-party release note as of September 2026.</li><li id="ref-riot-fog">Paul Chamberlain. <a href="https://technology.riotgames.com/news/demolishing-wallhacks-valorants-fog-war" target="_blank" rel="noopener">Demolishing Wallhacks with VALORANT’s Fog of War</a>. Riot Games Technology Blog, 2020.</li><li id="ref-bernier-2001">Yahn W. Bernier. <a href="https://developer.valvesoftware.com/wiki/Latency_Compensating_Methods_in_Client/Server_In-game_Protocol_Design_and_Optimization" target="_blank" rel="noopener">Latency Compensating Methods in Client/Server In-game Protocol Design and Optimization</a>. GDC 2001.</li><li id="ref-valve-wiki">Valve Developer Community. <a href="https://developer.valvesoftware.com/wiki/Source_Multiplayer_Networking" target="_blank" rel="noopener">Source Multiplayer Networking</a>.</li><li id="ref-gambetta">Gabriel Gambetta. <a href="https://www.gabrielgambetta.com/client-server-game-architecture.html" target="_blank" rel="noopener">Fast-Paced Multiplayer</a>: Client-Server Game Architecture; Client-Side Prediction and Server Reconciliation; Entity Interpolation; Lag Compensation; and the <a href="https://www.gabrielgambetta.com/client-side-prediction-live-demo.html" target="_blank" rel="noopener">live demo</a>.</li><li id="ref-vanwaveren-2006">J. M. P. van Waveren. <a href="https://mrelusive.com/publications/papers/The-DOOM-III-Network-Architecture.pdf" target="_blank" rel="noopener">The DOOM III Network Architecture</a>. id Software, 2006.</li><li id="ref-laurens-2007">Peter Laurens, Richard F. Paige, Phillip J. Brooke, Howard Chivers. <a href="https://doi.org/10.1109/ICECCS.2007.11" target="_blank" rel="noopener">A Novel Approach to the Detection of Cheating in Multiplayer Online Games</a>. ICECCS 2007, pp. 97–106.</li><li id="ref-darkforest">Dark Forest. <a href="https://blog.zkga.me/announcing-darkforest" target="_blank" rel="noopener">Announcing Dark Forest</a>. 2020.</li><li id="ref-ingonyama-fog">Ingonyama. <a href="https://www.ingonyama.com/post/cryptographic-fog-of-war" target="_blank" rel="noopener">Cryptographic Fog of War</a>.</li><li id="ref-gelman-bda3">Andrew Gelman, John B. Carlin, Hal S. Stern, David B. Dunson, Aki Vehtari, Donald B. Rubin. Bayesian Data Analysis, 3rd edition. Chapman &amp; Hall/CRC, 2013.</li><li id="ref-mcelreath">Richard McElreath. <a href="https://xcelab.net/rm/" target="_blank" rel="noopener">Statistical Rethinking</a>, 2nd edition. Chapman &amp; Hall/CRC, 2020.</li><li id="ref-riot-anticheat">Riot Games. <a href="https://technology.riotgames.com/news/riots-approach-anti-cheat" target="_blank" rel="noopener">Riot’s Approach to Anti-Cheat</a>. Riot Games Technology Blog, 2017.</li><li id="ref-sanglard-q3">Fabien Sanglard. <a href="https://fabiensanglard.net/quake3/network.php" target="_blank" rel="noopener">Quake 3 Source Code Review: Network Model</a>. 2012.</li><li id="ref-jfedor">jfedor.org. <a href="https://jfedor.org/quake3/" target="_blank" rel="noopener">Quake 3 Network Protocol</a>.</li><li id="ref-swinburne-q3">D. Stefyn, A. L. Cricenti, P. A. Branch. <a href="https://figshare.swinburne.edu.au/articles/report/Quake_III_Arena_game_structures/26254658" target="_blank" rel="noopener">Quake III Arena Game Structures</a>. CAIA Technical Report 110209A, Swinburne University of Technology, 2011.</li><li id="ref-unlagged">Neil “haste” Toronto. <a href="https://www.ra.is/unlagged/network.html" target="_blank" rel="noopener">Unlagged: Quake 3 Networking Primer</a>.</li><li id="ref-tariq-feature">Tariq10x. <a href="https://www.youtube.com/watch?v=hibDAXaHhnY" target="_blank" rel="noopener">How a Software Feature Changed Online Gaming Forever</a>. YouTube, 2024.</li><li id="ref-fecmtc-demo">mtc. <a href="https://fecmtc.github.io/mohaa-netcode-demo/" target="_blank" rel="noopener">MOHAA Netcode Visualization</a>. Interactive demo, 2026.</li><li id="ref-wiki-pvs">Wikipedia. <a href="https://en.wikipedia.org/wiki/Potentially_visible_set" target="_blank" rel="noopener">Potentially visible set</a>.</li><li id="ref-opm-docs-diff">OpenMoHAA documentation. <a href="https://github.com/openmoh/openmohaa/blob/667c50f9b24cf1d4ead8429412b6ca7fa29e3b8f/docs/markdown/01-intro/04-differences.md" target="_blank" rel="noopener">Differences from the original game</a> (section “Non-PVS optimization”), <code>docs/markdown/01-intro/04-differences.md</code> at 667c50f9.</li><li id="ref-tokey-fdg24">Samin Shahriar Tokey, Zesheng Chen, Colin Mettler, Dexuan Tang, Ben Boudaoud, Joohwan Kim, Josef Spjut, Mark Claypool. <a href="https://doi.org/10.1145/3649921.3650002" target="_blank" rel="noopener">The Effects of Network Latency on the Peeker’s Advantage in First-person Shooter Games</a>. FDG 2024 (<a href="https://web.cs.wpi.edu/~claypool/papers/peeker-fdg-24/" target="_blank" rel="noopener">project page</a>).</li><li id="ref-chen-peeker">Yuhao Chen. <a href="https://blog.cms.yuhao.app/peekers-advantage-in-asymmetrical-network-latency/" target="_blank" rel="noopener">Peeker’s Advantage in Asymmetrical Network Latency</a>. Blog post, October 2025.</li><li id="ref-sh-unlagged">slowptr. <a href="https://github.com/slowptr/sh-unlagged" target="_blank" rel="noopener">sh-unlagged</a>: a gamex86.dll wrapper for Medal of Honor: Spearhead aiming to reconstruct and optimise its netcode. GitHub.</li><li id="ref-netcodesim">Tariq10x. <a href="https://github.com/tariq10x/netcodesimulator" target="_blank" rel="noopener">netcodesimulator</a>: a local-first multiplayer netcode simulator for studying real-time networking artifacts. GitHub.</li><li id="ref-liu-claypool-2022">Shengmei Liu, Xiaokun Xu, Mark Claypool. <a href="https://doi.org/10.1145/3519023" target="_blank" rel="noopener">A Survey and Taxonomy of Latency Compensation Techniques for Network Computer Games</a>. ACM Computing Surveys 54(11s), 2022.</li><li id="ref-riot-netcode">David Straily, Matt deWet. <a href="https://technology.riotgames.com/news/peeking-valorants-netcode" target="_blank" rel="noopener">Peeking into VALORANT’s Netcode</a>. Riot Games Technology Blog, 2020.</li><li id="ref-tariq-subtick">Tariq10x. <a href="https://www.youtube.com/watch?v=jX8HuhOCYaE" target="_blank" rel="noopener">Subtick Just Sucks</a>. YouTube, 2025.</li><li id="ref-tariq-prove">Tariq10x. <a href="https://www.youtube.com/watch?v=7sYtlu8D0vE" target="_blank" rel="noopener">I Built This to Scientifically Prove Why You Suck at FPS Games</a>. YouTube, 2026.</li><li id="ref-pymc">PyMC developers. <a href="https://www.pymc.io/" target="_blank" rel="noopener">PyMC</a>: probabilistic programming in Python.</li><li id="ref-vehtari-loo">Aki Vehtari, Andrew Gelman, Jonah Gabry. <a href="https://doi.org/10.1007/s11222-016-9696-4" target="_blank" rel="noopener">Practical Bayesian model evaluation using leave-one-out cross-validation and WAIC</a>. Statistics and Computing 27, 2017 (<a href="https://arxiv.org/abs/1507.04544" target="_blank" rel="noopener">arXiv:1507.04544</a>).</li><li id="ref-goldsrc">Valve Developer Community. <a href="https://developer.valvesoftware.com/wiki/GoldSrc" target="_blank" rel="noopener">GoldSrc</a>; Valve Software, <a href="https://github.com/ValveSoftware/halflife" target="_blank" rel="noopener">halflife</a> (Half-Life SDK repository).</li><li id="ref-tariq-q3">Tariq10x. <a href="https://www.youtube.com/watch?v=b8J7fidxC8s" target="_blank" rel="noopener">Why 1999 Quake 3 Netcode Belongs in Every CS Degree</a>. YouTube.</li>
+<li id="ref-yan-randell-2005">Jeff Yan, Brian Randell. <a href="https://doi.org/10.1145/1103599.1103606" target="_blank" rel="noopener">A Systematic Classification of Cheating in Online Games</a>. NetGames 2005.</li>
+<li id="ref-epita-anticheat">Lucas Demenais. <a href="https://blog.gistre.epita.fr/posts/lucas.demenais-2025-06-24-history_of_anticheat/" target="_blank" rel="noopener">A History of Anti-Cheat Techniques in Video Games, from Server-Side Code to Kernel Level</a>. The Gistre Blog (EPITA), 2025.</li>
+<li id="ref-blackmirror">Seonghyun Park, Adil Ahmad, Byoungyoung Lee. <a href="https://doi.org/10.1145/3372297.3417890" target="_blank" rel="noopener">BlackMirror: Preventing Wallhacks in 3D Online FPS Games</a>. ACM CCS 2020.</li>
+<li id="ref-opm-docs-config">OpenMoHAA documentation. <a href="https://github.com/openmoh/openmohaa/blob/667c50f9b24cf1d4ead8429412b6ca7fa29e3b8f/docs/markdown/03-configuration/01-configuration.md" target="_blank" rel="noopener">Configuration</a> (section “Optimization / Antichams”), <code>docs/markdown/03-configuration/01-configuration.md</code> at 667c50f9; also published at <a href="https://docs.openmohaa.org/" target="_blank" rel="noopener">docs.openmohaa.org</a>.</li>
+<li id="ref-csgo-occlude">Counter-Strike: Global Offensive server-side player occlusion (<code>sv_occlude_players</code>), as described by third parties such as the <a href="https://github.com/87andrewh/CornerCullingSourceEngine" target="_blank" rel="noopener">CornerCullingSourceEngine</a> README. I could not locate a first-party release note as of September 2026.</li>
+<li id="ref-riot-fog">Paul Chamberlain. <a href="https://technology.riotgames.com/news/demolishing-wallhacks-valorants-fog-war" target="_blank" rel="noopener">Demolishing Wallhacks with VALORANT’s Fog of War</a>. Riot Games Technology Blog, 2020.</li>
+<li id="ref-bernier-2001">Yahn W. Bernier. <a href="https://developer.valvesoftware.com/wiki/Latency_Compensating_Methods_in_Client/Server_In-game_Protocol_Design_and_Optimization" target="_blank" rel="noopener">Latency Compensating Methods in Client/Server In-game Protocol Design and Optimization</a>. GDC 2001.</li>
+<li id="ref-valve-wiki">Valve Developer Community. <a href="https://developer.valvesoftware.com/wiki/Source_Multiplayer_Networking" target="_blank" rel="noopener">Source Multiplayer Networking</a>.</li>
+<li id="ref-gambetta">Gabriel Gambetta. <a href="https://www.gabrielgambetta.com/client-server-game-architecture.html" target="_blank" rel="noopener">Fast-Paced Multiplayer</a>: Client-Server Game Architecture; Client-Side Prediction and Server Reconciliation; Entity Interpolation; Lag Compensation; and the <a href="https://www.gabrielgambetta.com/client-side-prediction-live-demo.html" target="_blank" rel="noopener">live demo</a>.</li>
+<li id="ref-vanwaveren-2006">J. M. P. van Waveren. <a href="https://mrelusive.com/publications/papers/The-DOOM-III-Network-Architecture.pdf" target="_blank" rel="noopener">The DOOM III Network Architecture</a>. id Software, 2006.</li>
+<li id="ref-laurens-2007">Peter Laurens, Richard F. Paige, Phillip J. Brooke, Howard Chivers. <a href="https://doi.org/10.1109/ICECCS.2007.11" target="_blank" rel="noopener">A Novel Approach to the Detection of Cheating in Multiplayer Online Games</a>. ICECCS 2007, pp. 97–106.</li>
+<li id="ref-darkforest">Dark Forest. <a href="https://blog.zkga.me/announcing-darkforest" target="_blank" rel="noopener">Announcing Dark Forest</a>. 2020.</li>
+<li id="ref-ingonyama-fog">Ingonyama. <a href="https://www.ingonyama.com/post/cryptographic-fog-of-war" target="_blank" rel="noopener">Cryptographic Fog of War</a>.</li>
+<li id="ref-gelman-bda3">Andrew Gelman, John B. Carlin, Hal S. Stern, David B. Dunson, Aki Vehtari, Donald B. Rubin. Bayesian Data Analysis, 3rd edition. Chapman &amp; Hall/CRC, 2013.</li>
+<li id="ref-mcelreath">Richard McElreath. <a href="https://xcelab.net/rm/" target="_blank" rel="noopener">Statistical Rethinking</a>, 2nd edition. Chapman &amp; Hall/CRC, 2020.</li>
+<li id="ref-riot-anticheat">Riot Games. <a href="https://technology.riotgames.com/news/riots-approach-anti-cheat" target="_blank" rel="noopener">Riot’s Approach to Anti-Cheat</a>. Riot Games Technology Blog, 2017.</li>
+<li id="ref-sanglard-q3">Fabien Sanglard. <a href="https://fabiensanglard.net/quake3/network.php" target="_blank" rel="noopener">Quake 3 Source Code Review: Network Model</a>. 2012.</li>
+<li id="ref-jfedor">jfedor.org. <a href="https://jfedor.org/quake3/" target="_blank" rel="noopener">Quake 3 Network Protocol</a>.</li>
+<li id="ref-swinburne-q3">D. Stefyn, A. L. Cricenti, P. A. Branch. <a href="https://figshare.swinburne.edu.au/articles/report/Quake_III_Arena_game_structures/26254658" target="_blank" rel="noopener">Quake III Arena Game Structures</a>. CAIA Technical Report 110209A, Swinburne University of Technology, 2011.</li>
+<li id="ref-unlagged">Neil “haste” Toronto. <a href="https://www.ra.is/unlagged/network.html" target="_blank" rel="noopener">Unlagged: Quake 3 Networking Primer</a>.</li>
+<li id="ref-tariq-feature">Tariq10x. <a href="https://www.youtube.com/watch?v=hibDAXaHhnY" target="_blank" rel="noopener">How a Software Feature Changed Online Gaming Forever</a>. YouTube, 2024.</li>
+<li id="ref-wiki-pvs">Wikipedia. <a href="https://en.wikipedia.org/wiki/Potentially_visible_set" target="_blank" rel="noopener">Potentially visible set</a>.</li>
+<li id="ref-opm-docs-diff">OpenMoHAA documentation. <a href="https://github.com/openmoh/openmohaa/blob/667c50f9b24cf1d4ead8429412b6ca7fa29e3b8f/docs/markdown/01-intro/04-differences.md" target="_blank" rel="noopener">Differences from the original game</a> (section “Non-PVS optimization”), <code>docs/markdown/01-intro/04-differences.md</code> at 667c50f9.</li>
+<li id="ref-tokey-fdg24">Samin Shahriar Tokey, Zesheng Chen, Colin Mettler, Dexuan Tang, Ben Boudaoud, Joohwan Kim, Josef Spjut, Mark Claypool. <a href="https://doi.org/10.1145/3649921.3650002" target="_blank" rel="noopener">The Effects of Network Latency on the Peeker’s Advantage in First-person Shooter Games</a>. FDG 2024 (<a href="https://web.cs.wpi.edu/~claypool/papers/peeker-fdg-24/" target="_blank" rel="noopener">project page</a>).</li>
+<li id="ref-chen-peeker">Yuhao Chen. <a href="https://blog.cms.yuhao.app/peekers-advantage-in-asymmetrical-network-latency/" target="_blank" rel="noopener">Peeker’s Advantage in Asymmetrical Network Latency</a>. Blog post, October 2025.</li>
+<li id="ref-liu-claypool-2022">Shengmei Liu, Xiaokun Xu, Mark Claypool. <a href="https://doi.org/10.1145/3519023" target="_blank" rel="noopener">A Survey and Taxonomy of Latency Compensation Techniques for Network Computer Games</a>. ACM Computing Surveys 54(11s), 2022.</li>
+<li id="ref-riot-netcode">David Straily, Matt deWet. <a href="https://technology.riotgames.com/news/peeking-valorants-netcode" target="_blank" rel="noopener">Peeking into VALORANT’s Netcode</a>. Riot Games Technology Blog, 2020.</li>
+<li id="ref-tariq-subtick">Tariq10x. <a href="https://www.youtube.com/watch?v=jX8HuhOCYaE" target="_blank" rel="noopener">Subtick Just Sucks</a>. YouTube, 2025.</li>
+<li id="ref-tariq-prove">Tariq10x. <a href="https://www.youtube.com/watch?v=7sYtlu8D0vE" target="_blank" rel="noopener">I Built This to Scientifically Prove Why You Suck at FPS Games</a>. YouTube, 2026.</li>
+<li id="ref-vehtari-loo">Aki Vehtari, Andrew Gelman, Jonah Gabry. <a href="https://doi.org/10.1007/s11222-016-9696-4" target="_blank" rel="noopener">Practical Bayesian model evaluation using leave-one-out cross-validation and WAIC</a>. Statistics and Computing 27, 2017 (<a href="https://arxiv.org/abs/1507.04544" target="_blank" rel="noopener">arXiv:1507.04544</a>).</li>
+<li id="ref-goldsrc">Valve Developer Community. <a href="https://developer.valvesoftware.com/wiki/GoldSrc" target="_blank" rel="noopener">GoldSrc</a>; Valve Software, <a href="https://github.com/ValveSoftware/halflife" target="_blank" rel="noopener">halflife</a> (Half-Life SDK repository).</li>
+<li id="ref-tariq-q3">Tariq10x. <a href="https://www.youtube.com/watch?v=b8J7fidxC8s" target="_blank" rel="noopener">Why 1999 Quake 3 Netcode Belongs in Every CS Degree</a>. YouTube.</li>
     </ol>
   </section>
 
@@ -2284,6 +2458,21 @@
   </footer>
 </div>
 
+<script>
+/* Theme toggle, as on the home page. The figures take their colours from the CSS variables, so they follow without a redraw. */
+(() => {
+  "use strict";
+  const root = document.documentElement, btn = document.getElementById("themeBtn");
+  const label = () => { const t = root.dataset.theme === "dark" ? "Switch to light theme" : "Switch to dark theme"; btn.setAttribute("aria-label", t); btn.title = t; };
+  btn.addEventListener("click", () => {
+    const dark = root.dataset.theme !== "dark";
+    if (dark) root.dataset.theme = "dark"; else delete root.dataset.theme;
+    try { localStorage.setItem("theme", dark ? "dark" : "light"); } catch (e) {}
+    label();
+  });
+  label();
+})();
+</script>
 
 <!-- ===================== LIBS ===================== -->
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
@@ -3007,7 +3196,7 @@ window.addEventListener('load',renderMath);
 </script>
 
 <script>
-/* The ~ console, as on the home page, with commands for getting around a long read. */
+/* The ~ console, with commands for getting around a long read. */
 (() => {
   "use strict";
   const con = document.getElementById("con"), out = document.getElementById("conOut"),
